@@ -19,7 +19,9 @@
 //!    (see [`crate::zrp`]).
 //! 7. **One relay per packet**, ever.
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::VecDeque;
+
+use crate::util::SmallMap;
 use alloc::vec::Vec;
 
 use rand_core::RngCore;
@@ -69,7 +71,7 @@ pub struct SeenEntry {
 /// Bounded LRU cache of packet identifiers.
 #[derive(Debug)]
 pub struct SeenCache {
-    map: BTreeMap<PacketKey, SeenEntry>,
+    map: SmallMap<PacketKey, SeenEntry>,
     order: VecDeque<PacketKey>,
     cap: usize,
     ttl_ms: u64,
@@ -77,7 +79,7 @@ pub struct SeenCache {
 
 impl SeenCache {
     pub fn new(cap: usize, ttl_ms: u64) -> Self {
-        Self { map: BTreeMap::new(), order: VecDeque::new(), cap: cap.max(1), ttl_ms }
+        Self { map: SmallMap::new(), order: VecDeque::new(), cap: cap.max(1), ttl_ms }
     }
 
     /// Record an observation. Returns `true` when the packet is new.

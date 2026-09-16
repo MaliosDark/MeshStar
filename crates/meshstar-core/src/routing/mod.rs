@@ -7,7 +7,7 @@
 //! marginal one. Up to `alternatives` routes are kept per destination so
 //! that a broken link can fall back without a new discovery.
 
-use alloc::collections::BTreeMap;
+use crate::util::{sort_by_key, SmallMap};
 use alloc::vec::Vec;
 
 use crate::identity::Address;
@@ -86,13 +86,13 @@ pub fn link_cost(quality: u8, congestion: u8) -> u16 {
 #[derive(Debug)]
 pub struct RouteCache {
     cfg: RoutingConfig,
-    routes: BTreeMap<Address, Vec<RouteEntry>>,
+    routes: SmallMap<Address, Vec<RouteEntry>>,
     pub route_errors_received: u32,
 }
 
 impl RouteCache {
     pub fn new(cfg: RoutingConfig) -> Self {
-        Self { cfg, routes: BTreeMap::new(), route_errors_received: 0 }
+        Self { cfg, routes: SmallMap::new(), route_errors_received: 0 }
     }
 
     pub fn config(&self) -> &RoutingConfig {
@@ -124,7 +124,7 @@ impl RouteCache {
                 self.routes.remove(&victim);
             }
         }
-        let list = self.routes.entry(e.dst).or_default();
+        let list = self.routes.get_or_default(e.dst);
         if let Some(existing) = list.iter_mut().find(|r| r.next_hop == e.next_hop) {
             let better = e.cost <= existing.cost || e.source == RouteSource::Discovery;
             if better {
@@ -132,11 +132,11 @@ impl RouteCache {
             } else {
                 existing.expires_at = existing.expires_at.max(e.expires_at);
             }
-            list.sort_by_key(|r| r.effective_cost(now));
+            sort_by_key(list, |r| r.effective_cost(now));
             return better;
         }
         list.push(e);
-        list.sort_by_key(|r| r.effective_cost(now));
+        sort_by_key(list, |r| r.effective_cost(now));
         list.truncate(self.cfg.alternatives);
         list.iter().any(|r| r.next_hop == e.next_hop)
     }
@@ -149,7 +149,7 @@ impl RouteCache {
     /// All live routes to `dst`, best first.
     pub fn alternatives(&self, dst: &Address, now: u64) -> Vec<RouteEntry> {
         let mut v: Vec<RouteEntry> = self.routes.get(dst).map(|l| l.iter().filter(|r| r.expires_at > now).copied().collect()).unwrap_or_default();
-        v.sort_by_key(|r| r.effective_cost(now));
+        sort_by_key(&mut v, |r| r.effective_cost(now));
         v
     }
 
@@ -283,7 +283,7 @@ mod tests {
         c.insert(route(8, 1, 1, 100), 2000);
         c.insert(route(7, 2, 1, 100), 2000);
         let mut affected = c.invalidate_via(&a(1));
-        affected.sort();
+        sort_by_key(&mut affected, |a| *a);
         assert_eq!(affected, alloc::vec![a(8), a(9)]);
         assert!(c.lookup(&a(7), 2000).is_some());
     }

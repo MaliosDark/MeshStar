@@ -12,7 +12,7 @@
 
 pub mod beacon;
 
-use alloc::collections::BTreeMap;
+use crate::util::SmallMap;
 use alloc::vec::Vec;
 
 pub use beacon::{Beacon, ZoneEntry, ZONE_ENTRY_LEN};
@@ -188,13 +188,13 @@ pub struct BeaconObservation {
 #[derive(Debug)]
 pub struct NeighborTable {
     cfg: NeighborConfig,
-    map: BTreeMap<Address, Neighbor>,
+    map: SmallMap<Address, Neighbor>,
     pub rejected_beacons: u32,
 }
 
 impl NeighborTable {
     pub fn new(cfg: NeighborConfig) -> Self {
-        Self { cfg, map: BTreeMap::new(), rejected_beacons: 0 }
+        Self { cfg, map: SmallMap::new(), rejected_beacons: 0 }
     }
 
     pub fn config(&self) -> &NeighborConfig {
@@ -248,8 +248,14 @@ impl NeighborTable {
 
     pub fn observe_beacon_as(&mut self, now: u64, src: Address, b: &Beacon, meta: &RxMeta, me: Option<Address>) -> BeaconObservation {
         let mut obs = BeaconObservation { is_new: false, identity_verified: false, identity_rejected: false };
-        // Verify full identity before touching the table.
+        // Verify full identity before touching the table. A `tiny` build
+        // (relay on a part without room for Ed25519) ignores the identity
+        // part of full beacons: it keeps no keys, so nothing depends on it.
+        #[cfg(feature = "tiny")]
+        let verified: Option<PublicIdentity> = None;
+        #[cfg(not(feature = "tiny"))]
         let mut verified: Option<PublicIdentity> = None;
+        #[cfg(not(feature = "tiny"))]
         if let Some(full) = &b.full {
             match PublicIdentity::from_bytes(&full.public_key) {
                 Ok(id) if id.address() == src && b.verify_signature(src, &id).is_ok() => {

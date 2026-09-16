@@ -39,6 +39,41 @@ impl Storage for MemoryStorage {
 /// Deterministic seedable CSPRNG used everywhere in the core.
 pub type Rng = rand_chacha::ChaCha20Rng;
 
+/// A tiny non-cryptographic generator (SplitMix64) for parts where the
+/// ChaCha code does not fit; only for timers and jitter (a relay), never
+/// for keys or nonces.
+#[derive(Clone, Debug)]
+pub struct SmallRng(u64);
+
+impl SmallRng {
+    pub fn new(seed: u64) -> Self {
+        Self(seed ^ 0x9E37_79B9_7F4A_7C15)
+    }
+}
+
+impl rand_core::RngCore for SmallRng {
+    fn next_u32(&mut self) -> u32 {
+        (self.next_u64() >> 32) as u32
+    }
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for chunk in dest.chunks_mut(8) {
+            let v = self.next_u64().to_le_bytes();
+            chunk.copy_from_slice(&v[..chunk.len()]);
+        }
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
 /// Build the core RNG from platform entropy (hardware RNG, seed file, ...).
 pub fn rng_from_seed(seed: [u8; 32]) -> Rng {
     use rand_core::SeedableRng;

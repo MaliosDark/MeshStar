@@ -104,6 +104,50 @@ The examples are excluded from the workspace because they need those
 toolchains; the driver crates themselves build on the host and have tests
 with a fake SPI bus.
 
+## Specter DX-LR30 relay (STM32F103C8T6 + SX1262)
+
+`examples/stm32f1-specter` is a **MeshStar relay**: the forwarding half of a
+node (`meshstar_core::relay`) for a part with 64 KB of flash and 20 KB of
+RAM. It beacons, keeps the neighbour/zone/route tables, relays ROUTE_REQUEST
+floods with the storm rules, forwards unicasts it is the next hop of with
+hop-by-hop reliability, repairs routes for sources and holds a couple of
+packets for a sleeping LEAF. No sessions, mailbox, transport or
+fragmentation: it never decrypts anything, which the packet design allows
+(only ttl/hops/next_hop/relay are mutable per hop).
+
+What made it fit (measured with `llvm-size`, opt-level z, LTO):
+
+| step | flash |
+|---|---|
+| full `Node` (ANCHOR) on Cortex-M3 | 172 KB |
+| `Relay` engine with Ed25519 signing/verification | 114 KB |
+| unsigned identity (`UnsignedIdentity`) + `tiny` feature (no beacon signature verification) + SplitMix RNG | 77 KB |
+| protocol tables on `SmallMap` (sorted `Vec`) and insertion sort instead of `BTreeMap` + stable sort | 41 KB |
+| whole firmware (HAL, SX1262 driver, console) | **45 KB** flash, 10 KB static RAM (heap) |
+
+The `SmallMap` change applies to the full node too (same lookups, less
+code and no per-node allocations); all 195 tests pass unchanged.
+
+Trade-off, stated plainly: a relay on this part does not sign its beacons
+and does not verify others'. Nodes only need a neighbour's proven identity
+for sessions and envelopes, which never involve a relay, so the relay is a
+routing label, exactly like any node between its full beacons. A relay on
+a bigger part uses `SignedIdentity` and behaves like a node.
+
+Pins: SPI1 PA5/PA6/PA7, NSS PA4, BUSY PA2, NRST PA3, RF switch TXEN PA0 /
+RXEN PA1 (driven by the firmware around every transmit), LED PB11, console
+USART1 PA9/PA10 at 115200 (a status line every 30 s). DIO1 is not wired on
+the module, so the driver polls the IRQ status over SPI (`AlwaysHigh` DIO1).
+Identity: address mixed from the MCU unique id.
+
+Build and flash (STM32 ROM bootloader over the CH340, 57600 baud):
+```
+rustup target add thumbv7m-none-eabi; rustup component add llvm-tools
+pip install stm32loader
+# hold BOOT0, press+release RESET, release BOOT0, then:
+tools/flash_specter.sh /dev/ttyUSB1
+```
+
 ## The original firmware
 
 A Heltec board with the *original* MeshStar firmware is kept as reference.

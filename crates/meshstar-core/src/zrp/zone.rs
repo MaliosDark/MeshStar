@@ -1,6 +1,6 @@
 //! Intra-zone routing table (IARP): bounded distance vector.
 
-use alloc::collections::BTreeMap;
+use crate::util::{sort_by_key, SmallMap};
 use alloc::vec::Vec;
 
 use crate::identity::Address;
@@ -45,14 +45,14 @@ pub struct ZoneTable {
     radius: u8,
     max_entries: usize,
     entry_ttl_ms: u64,
-    nodes: BTreeMap<Address, ZoneNode>,
+    nodes: SmallMap<Address, ZoneNode>,
     /// Advertised distance-1 lists of our neighbours (for coverage pruning).
-    adjacency: BTreeMap<Address, Vec<Address>>,
+    adjacency: SmallMap<Address, Vec<Address>>,
 }
 
 impl ZoneTable {
     pub fn new(radius: u8, max_entries: usize, entry_ttl_ms: u64) -> Self {
-        Self { radius: radius.clamp(1, 4), max_entries, entry_ttl_ms, nodes: BTreeMap::new(), adjacency: BTreeMap::new() }
+        Self { radius: radius.clamp(1, 4), max_entries, entry_ttl_ms, nodes: SmallMap::new(), adjacency: SmallMap::new() }
     }
 
     pub fn radius(&self) -> u8 {
@@ -172,7 +172,7 @@ impl ZoneTable {
         if v.is_empty() || max == 0 {
             return Vec::new();
         }
-        v.sort_by_key(|n| n.addr);
+        sort_by_key(&mut v, |n| n.addr);
         let len = v.len();
         let windows = len.div_ceil(max);
         let start = (round as usize % windows) * max;

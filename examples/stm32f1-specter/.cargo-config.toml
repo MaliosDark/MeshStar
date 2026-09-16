@@ -1,0 +1,6 @@
+# Copy to .cargo/config.toml (kept out of the way so the workspace build ignores it)
+[build]
+target = "thumbv7m-none-eabi"
+
+[target.thumbv7m-none-eabi]
+rustflags = ["-C", "link-arg=-Tlink.x"]

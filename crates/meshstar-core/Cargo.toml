@@ -10,6 +10,10 @@ authors.workspace = true
 [features]
 default = ["std"]
 std = ["rand_core/std", "log/std", "serde/std", "serde_json"]
+# Relay builds for parts without room for Ed25519 (see relay/mod.rs): full
+# beacons are accepted without signature verification and no identity is
+# kept. Never enable it for a full node.
+tiny = []
 
 [dependencies]
 ed25519-dalek = { workspace = true }

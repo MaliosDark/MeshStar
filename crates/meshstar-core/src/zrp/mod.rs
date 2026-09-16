@@ -29,7 +29,7 @@ pub mod zone;
 pub use messages::{RouteError, RouteReply, RouteRequest};
 pub use zone::{ZoneNode, ZoneTable};
 
-use alloc::collections::BTreeMap;
+use crate::util::SmallMap;
 use alloc::vec::Vec;
 
 use crate::identity::Address;
@@ -162,10 +162,10 @@ pub struct SeenRequest {
 #[derive(Debug)]
 pub struct Ierp {
     cfg: ZrpConfig,
-    pub pending: BTreeMap<Address, Discovery>,
-    seen_requests: BTreeMap<(Address, u32), SeenRequest>,
+    pub pending: SmallMap<Address, Discovery>,
+    seen_requests: SmallMap<(Address, u32), SeenRequest>,
     /// Last time a discovery for a target finished (success or failure).
-    last_finished: BTreeMap<Address, (u64, bool)>,
+    last_finished: SmallMap<Address, (u64, bool)>,
     pub discoveries_started: u32,
     pub discoveries_succeeded: u32,
     pub discoveries_failed: u32,
@@ -176,9 +176,9 @@ impl Ierp {
     pub fn new(cfg: ZrpConfig) -> Self {
         Self {
             cfg,
-            pending: BTreeMap::new(),
-            seen_requests: BTreeMap::new(),
-            last_finished: BTreeMap::new(),
+            pending: SmallMap::new(),
+            seen_requests: SmallMap::new(),
+            last_finished: SmallMap::new(),
             discoveries_started: 0,
             discoveries_succeeded: 0,
             discoveries_failed: 0,

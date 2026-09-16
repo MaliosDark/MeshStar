@@ -12,3 +12,5 @@ app/android/.gradle/
 app/android/local.properties
 app/android/app/.cxx/
 app/*.iml
+examples/stm32f1-specter/target/
+examples/stm32f1-specter/.cargo/

@@ -11,7 +11,7 @@ members = [
 ]
 # ESP32 firmware examples need the Xtensa/RISC-V toolchain (espup) and are
 # built on their own: `cd examples/esp32-sx1262 && cargo build --release`.
-exclude = ["examples/esp32-sx1262", "examples/esp32-sx1276"]
+exclude = ["examples/esp32-sx1262", "examples/esp32-sx1276", "examples/stm32f1-specter"]
 
 [workspace.package]
 version = "0.1.0"

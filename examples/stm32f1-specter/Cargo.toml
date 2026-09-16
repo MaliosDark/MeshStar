@@ -1,0 +1,31 @@
+[package]
+name = "meshstar-specter-relay"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "MeshStar relay firmware for the Specter DX-LR30 repeater (STM32F103C8T6 + SX1262)"
+
+[dependencies]
+meshstar-core = { path = "../../crates/meshstar-core", default-features = false, features = ["tiny"] }
+meshstar-radio-sx126x = { path = "../../crates/meshstar-radio-sx126x" }
+stm32f1xx-hal = { version = "0.11", features = ["stm32f103", "medium"] }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+panic-halt = "1.0"
+embedded-alloc = "0.6"
+embedded-hal = "1.0"
+embedded-hal-bus = "0.2"
+nb = "1"
+embedded-hal-nb = "1.0"
+rand_core = { version = "0.6", default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = true
+
+[profile.dev]
+opt-level = "z"
+panic = "abort"

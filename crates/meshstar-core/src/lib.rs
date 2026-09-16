@@ -43,10 +43,12 @@ pub mod platform;
 pub mod power;
 pub mod protocol;
 pub mod radio;
+pub mod relay;
 pub mod routing;
 pub mod store_forward;
 pub mod storm;
 pub mod transport;
+pub mod util;
 pub mod zrp;
 
 pub use identity::{Address, Identity, PublicIdentity};

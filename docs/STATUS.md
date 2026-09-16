@@ -77,6 +77,11 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
 7. Modelado de flooding gestionado de Meshtastic y repetidores MeshCore con más fidelidad en el
    simulador (hoy: flood genérico con tope de saltos).
 8. Persistencia de estado en el firmware (identidad ya se guarda; falta buzón/rutas).
+11. **MeshStar Relay para el Specter DX-LR30** (2026-09-16): motor `meshstar_core::relay`
+   (test de integración: dos nodos fuera de alcance hablan a través de uno), identidad sin
+   firma + feature `tiny` + `SmallMap` en las tablas del core (de 172 KB a 45 KB de flash;
+   ver docs/HARDWARE.md). Firmware `examples/stm32f1-specter` compilado; **pendiente de
+   flashear y probar en la placa** (BOOT0+RESET, `tools/flash_specter.sh`).
 10. **App Android + protocolo companion** (hecho 2026-09-16): `crates/meshstar-companion`
    (códec no_std, docs/COMPANION_PROTOCOL.md), BLE en el firmware ESP32-S3 (esp-wifi +
    bleps, servicio `4d657368-…`), app Flutter en `app/` (Chats/Nodos/Redes/Dispositivo,
