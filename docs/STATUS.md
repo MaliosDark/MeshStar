@@ -53,16 +53,20 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
    Pendiente: protocolo BLE NUS de la app compañera (sólo se conoce `0x04 SEND_MSG`), ADR,
    lectura de batería, y decidir si se ofrece el suite `Noise_XX_25519_AESGCM_BLAKE2b`
    (sólo útil si existen más nodos con el firmware original).
-2. **Compilar y flashear los ejemplos** en una placa que no sea la de referencia; ajustar a la
-   versión de `esp-hal` instalada; validar los drivers en hardware real (sync word, CAD, RSSI).
+2. ~~Compilar y flashear los ejemplos~~ **Hecho** (2026-09-16): dos Heltec V3 con el firmware Rust
+   intercambian beacons, descubren ruta, completan Noise XX y entregan mensajes con ACK.
+   Grabado con `tools/flash_example.sh` (esptool; espflash 4 no acepta imágenes sin app
+   descriptor). Pendiente en hardware: revisar lecturas RSSI a 0 intermitentes en el driver
+   SX126x, falsos positivos de `channel_busy`, OLED/botón (sin confirmar visualmente), sondeo CAD.
 3. **Store-and-forward a escala** (benchmark F: 19,7 % entregado, 18 % confirmado tras el
    rediseño LEAF/host). Lo que queda es la fiabilidad de la respuesta de descubrimiento a varios
    saltos (el remitente necesita llegar al host de la LEAF para obtener la clave). Ideas: que
    cualquier nodo que conozca la clave de una LEAF pueda adjuntarla en un RREP de "sólo clave"
    sin ruta; caché de claves de LEAF distribuida en beacons completos de los hosts (32 B por
    LEAF, rotando); reintento del RREQ de clave con TTL pequeño hacia el host conocido.
-4. **Validar la interoperabilidad con dispositivos reales** (los vectores AES-CTR y ADVERT se
-   derivaron del código fuente, no de capturas). Marcar como verificado en las notas.
+4. ~~Validar la interoperabilidad~~ **MeshCore hecho** (2026-09-16, companion v1.17.1 real,
+   ambos sentidos, ver docs/INTEROP.md). **Meshtastic pendiente** (sin dispositivo). Falta un
+   reloj/sincronización de hora para los timestamps foráneos.
 5. Optimizaciones de protocolo pendientes de medir: m3 + primer DATA en un solo paquete;
    clave Ed25519 comprimida a 1 bit de signo en m2/m3 (-31 B); LINK_ACK sólo cuando no hay
    respuesta inmediata; beacons más cortos (direcciones truncadas en entradas de zona).

@@ -1,5 +1,7 @@
 # MeshCore LoRa Mesh Protocol — Reference Notes for a Rust Adapter
 
+> **Hardware validation (2026-09-16):** a Heltec V3 with official companion firmware v1.17.1 confirmed the EU/UK defaults 869.618 MHz / BW 62.5 / SF8 / CR 4/8, the Public channel secret and its hash byte `0x11`, ADVERT signature verification and GRP_TXT encrypt/decrypt in both directions (see docs/INTEROP.md).
+
 Researched 2026-09-16 against the **official** MeshCore sources (branch `main`; `dev/src/Packet.h`
 was diffed against `main` and is byte-identical). Every fact below is cited. Items that could not be
 confirmed from an official source are marked **UNVERIFIED**.
