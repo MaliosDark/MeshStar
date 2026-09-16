@@ -1,0 +1,48 @@
+MeshStar side
+metric                                   value
+----------------------------------------------
+nodes                                       30
+avg radio degree                           5.4
+messages sent                               47
+delivery ratio                          51.1 %
+ack ratio                               38.3 %
+stored at anchor                             0
+latency mean / p95 (ms)         88272 / 456500
+avg hops                                  2.00
+tx packets                                3076
+tx per delivery                           44.2
+relays / suppressed                1094 / 1182
+duplicates rx                             5804
+retransmissions                             60
+control overhead                        64.0 %
+route requests                              25
+route convergence mean               354440 ms
+collisions                               12858
+channel utilisation                    46.16 %
+airtime per node                        27.7 s
+energy mean (mAh)                         5.23
+energy leaf / anchor               0.69 / 6.49
+
+Interop
+{
+  "foreign_messages_sent": 48,
+  "foreign_relays": 1150,
+  "bridged_in_delivered": 30,
+  "bridged_in_reach": 0.6377777,
+  "bridged_in_latency_mean_ms": 1240.6666,
+  "native_broadcasts_sent": 25,
+  "bridged_out_delivered": 12,
+  "bridged_out_reach": 0.3125,
+  "gateway_frames_in": 848,
+  "gateway_frames_out": 732,
+  "gateway_airtime_out_ms": 585723,
+  "gateway_duplicates": 299,
+  "gateway_loops_prevented": 0,
+  "gateway_rate_limited": 483,
+  "gateway_policy_denied": 0,
+  "gateway_unsupported": 0,
+  "gateway_degraded": 7,
+  "missed_by_schedule": 0,
+  "foreign_collisions": 6713,
+  "translation_airtime_native_ms": 69055
+}

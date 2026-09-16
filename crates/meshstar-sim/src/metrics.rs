@@ -115,6 +115,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn track(&mut self, now: u64, src: usize, dst: usize, handle: u32, broadcast: bool, reliability: Reliability, _n: usize) {
         let idx = self.tracked.len();
         self.tracked.push(Tracked { sent_at: now, src, dst, broadcast, reliability, received_at: None, hops: None, acked_at: None, stored_at: None, failed: None, reach: 0 });

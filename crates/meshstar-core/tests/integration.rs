@@ -160,9 +160,9 @@ fn broadcast_with_group_key() {
     m.run(6_000);
     m.nodes[ids[0]].send_broadcast(b"to all").unwrap();
     m.run(4_000);
-    for i in 1..4 {
-        assert_eq!(m.received_by(ids[i]), vec![b"to all".to_vec()], "node {}", i);
-        assert!(m.events_of(ids[i]).iter().any(|e| matches!(e, NodeEvent::MessageReceived { protection: Protection::Group, .. })));
+    for (i, &id) in ids.iter().enumerate().skip(1) {
+        assert_eq!(m.received_by(id), vec![b"to all".to_vec()], "node {}", i);
+        assert!(m.events_of(id).iter().any(|e| matches!(e, NodeEvent::MessageReceived { protection: Protection::Group, .. })));
     }
     assert!(m.received_by(outsider).is_empty());
     assert!(m.nodes[outsider].counters().auth_failures > 0 || m.nodes[outsider].counters().rx_bad > 0);
