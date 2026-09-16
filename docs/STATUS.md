@@ -47,9 +47,12 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
 
 1. ~~Volcado y análisis del firmware original~~ **Hecho** (2026-09-16): `firmware-dump/`
    (fuera de git: contiene la clave privada) y `docs/research/ORIGINAL_FIRMWARE_NOTES.md`.
-   Pendiente de portar del original: UI OLED, protocolo BLE NUS de la app compañera, ADR,
-   claves NVS `ed25519_pk/sk`, escaneo SF8/SF9 de MeshCore EU, y decidir si se ofrece el
-   suite `Noise_XX_25519_AESGCM_BLAKE2b` para hablar con nodos del firmware original.
+   Portado ya: identidad desde NVS (`platform::nvs`, verificado contra el volcado), perfiles
+   MeshCore EU SF8/SF9 (`eu_uk_scan`) y **sondeo CAD** en el driver SX126x (mejor que el
+   ciclo de 15 s del original), pantalla OLED con páginas Status/Signal/Nodes/Radio y botón.
+   Pendiente: protocolo BLE NUS de la app compañera (sólo se conoce `0x04 SEND_MSG`), ADR,
+   lectura de batería, y decidir si se ofrece el suite `Noise_XX_25519_AESGCM_BLAKE2b`
+   (sólo útil si existen más nodos con el firmware original).
 2. **Compilar y flashear los ejemplos** en una placa que no sea la de referencia; ajustar a la
    versión de `esp-hal` instalada; validar los drivers en hardware real (sync word, CAD, RSSI).
 3. **Store-and-forward a escala** (benchmark F: 19,7 % entregado, 18 % confirmado tras el
