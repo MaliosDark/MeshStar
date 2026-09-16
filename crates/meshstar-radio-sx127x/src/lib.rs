@@ -507,7 +507,8 @@ mod tests {
         r.transmit(&[5, 6, 7]).unwrap();
         assert_eq!(chip.borrow().fifo, vec![5, 6, 7]);
         assert_eq!(chip.borrow().regs[&reg::PAYLOAD_LENGTH], 3);
-        // receive
+        // receive: enter RX first, then a packet "arrives"
+        r.start_receive().unwrap();
         {
             let mut c = chip.borrow_mut();
             c.regs.insert(reg::IRQ_FLAGS, irq::RX_DONE);
