@@ -1,0 +1,30 @@
+[package]
+name = "meshstar-esp32-sx1262"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "MeshStar node firmware for Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262)"
+
+[dependencies]
+meshstar-core = { path = "../../crates/meshstar-core", default-features = false }
+meshstar-radio-sx126x = { path = "../../crates/meshstar-radio-sx126x" }
+esp-hal = { version = "0.23", features = ["esp32s3", "unstable"] }
+esp-backtrace = { version = "0.15", features = ["esp32s3", "panic-handler", "exception-handler", "println"] }
+esp-println = { version = "0.13", features = ["esp32s3", "log"] }
+esp-alloc = "0.6"
+esp-storage = { version = "0.4", features = ["esp32s3"] }
+embedded-storage = "0.3"
+embedded-hal = "1.0"
+embedded-hal-bus = "0.2"
+heapless = "0.8"
+log = "0.4"
+rand_core = { version = "0.6", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+debug = true
+
+[profile.dev]
+opt-level = 1
