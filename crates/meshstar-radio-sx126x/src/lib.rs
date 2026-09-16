@@ -211,6 +211,16 @@ where
         self.cmd(op::CLEAR_IRQ_STATUS, &mask.to_be_bytes())
     }
 
+    /// Board configuration in use.
+    pub fn board(&self) -> BoardConfig {
+        self.board
+    }
+
+    /// Change the board configuration (takes effect at the next `init`).
+    pub fn set_board(&mut self, board: BoardConfig) {
+        self.board = board;
+    }
+
     /// Hardware reset and basic initialisation. Call once.
     pub fn init(&mut self) -> Result<(), RadioError> {
         self.rst.set_low().map_err(|_| RadioError::Bus)?;

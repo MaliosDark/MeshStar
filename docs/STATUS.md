@@ -80,8 +80,9 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
 11. **MeshStar Relay para el Specter DX-LR30** (2026-09-16): motor `meshstar_core::relay`
    (test de integración: dos nodos fuera de alcance hablan a través de uno), identidad sin
    firma + feature `tiny` + `SmallMap` en las tablas del core (de 172 KB a 45 KB de flash;
-   ver docs/HARDWARE.md). Firmware `examples/stm32f1-specter` compilado; **pendiente de
-   flashear y probar en la placa** (BOOT0+RESET, `tools/flash_specter.sh`).
+   ver docs/HARDWARE.md). Firmware `examples/stm32f1-specter` **flasheado y validado en la placa**
+   (2026-09-17: oye/decodifica A y B, reenvía; cristal, sin TCXO). Falta la prueba física con
+   B fuera de alcance de A.
 10. **App Android + protocolo companion** (hecho 2026-09-16): `crates/meshstar-companion`
    (códec no_std, docs/COMPANION_PROTOCOL.md), BLE en el firmware ESP32-S3 (esp-wifi +
    bleps, servicio `4d657368-…`), app Flutter en `app/` (Chats/Nodos/Redes/Dispositivo,

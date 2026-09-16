@@ -138,7 +138,15 @@ Pins: SPI1 PA5/PA6/PA7, NSS PA4, BUSY PA2, NRST PA3, RF switch TXEN PA0 /
 RXEN PA1 (driven by the firmware around every transmit), LED PB11, console
 USART1 PA9/PA10 at 115200 (a status line every 30 s). DIO1 is not wired on
 the module, so the driver polls the IRQ status over SPI (`AlwaysHigh` DIO1).
-Identity: address mixed from the MCU unique id.
+Identity: address mixed from the MCU unique id. The module has a plain
+crystal (no TCXO): the firmware tries DIO3-TCXO first and falls back to
+XTAL when the test transmission times out (`radio: SX1262 ok (XTAL)`).
+
+Validated 2026-09-17 with the real board next to the two Heltec V3 nodes:
+`nb=2 zone=2 routes=2 rx=23 bad=0 relayed=1` (it heard and decoded both,
+re-flooded one broadcast and pruned the rest by coverage, as it should
+when everybody hears everybody). A and B in range talk directly; the
+out-of-range bridging case is the integration test `tests/relay.rs`.
 
 Build and flash (STM32 ROM bootloader over the CH340, 57600 baud):
 ```

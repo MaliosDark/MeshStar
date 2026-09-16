@@ -250,9 +250,10 @@ fn main() -> ! {
     // Radio.
     let spi = dp.SPI1.spi((Some(sck), Some(miso), Some(mosi)), Mode { phase: Phase::CaptureOnFirstTransition, polarity: Polarity::IdleLow }, 4.MHz(), &mut rcc);
     let dev = ExclusiveDevice::new_no_delay(spi, NoPin).unwrap();
-    let board = BoardConfig { high_power_pa: true, dio2_rf_switch: false, dio3_tcxo: Some(0x00), dcdc: true, tcxo_delay_ms: 5 };
-    let sx = Sx126x::new(dev, nss, rst, busy, AlwaysHigh, TickDelay, board);
-    let mut radio = Switched { radio: sx, txen, rxen };
+    // The module's oscillator is not documented: try a TCXO on DIO3 (1.6 V,
+    // RadioLib's default) and fall back to a plain crystal, keeping whichever
+    // completes a test transmission.
+    let mut radio = Switched { radio: Sx126x::new(dev, nss, rst, busy, AlwaysHigh, TickDelay, BoardConfig { high_power_pa: true, dio2_rf_switch: false, dio3_tcxo: Some(0x00), dcdc: true, tcxo_delay_ms: 5 }), txen, rxen };
     let mut delay = TickDelay;
 
     let addr = address_from_uid();
@@ -260,8 +261,26 @@ fn main() -> ! {
     con.hex(&addr.0);
     con.str(" (Specter DX-LR30)\r\n");
     let profile = LoRaProfile::MESHSTAR_EU868;
-    let radio_ok = radio.radio.init().and_then(|_| radio.configure(&profile)).and_then(|_| radio.start_receive()).is_ok();
-    con.str(if radio_ok { "radio: SX1262 ok\r\n" } else { "radio: INIT FAILED\r\n" });
+    let mut radio_ok = false;
+    for attempt in 0..2u8 {
+        if attempt == 1 {
+            radio.radio.set_board(BoardConfig { dio3_tcxo: None, ..radio.radio.board() });
+        }
+        let r = radio.radio.init().and_then(|_| radio.configure(&profile)).and_then(|_| radio.transmit(&[0x00, 0x01, 0x02, 0x03]));
+        match r {
+            Ok(()) => {
+                con.str(if attempt == 0 { "radio: SX1262 ok (TCXO)\r\n" } else { "radio: SX1262 ok (XTAL)\r\n" });
+                radio_ok = true;
+                break;
+            }
+            Err(e) => {
+                con.str("radio: attempt failed err ");
+                con.dec(e as u32);
+                con.str("\r\n");
+            }
+        }
+    }
+    let _ = radio.start_receive();
 
     let uid = unsafe { core::ptr::read_volatile(0x1FFF_F7E8 as *const [u32; 3]) };
     let seed = (uid[0] as u64) << 32 | uid[2] as u64;
@@ -273,6 +292,8 @@ fn main() -> ! {
     let mut led_until = now + 1500;
     let mut last_status = now;
     let mut rng = SmallRng::new(seed ^ 0x55);
+    let mut rx_errors = 0u32;
+    let mut last_rx_err = 0u32;
     let _ = led.set_high();
 
     loop {
@@ -285,7 +306,10 @@ fn main() -> ! {
                     led_until = now + 30;
                 }
                 Ok(None) => {}
-                Err(_) => {}
+                Err(e) => {
+                    rx_errors += 1;
+                    last_rx_err = e as u32;
+                }
             }
         }
         relay.poll(now);
@@ -298,7 +322,11 @@ fn main() -> ! {
                 delay.delay_ms(5 + (rng.next_u32() % 25));
                 tries += 1;
             }
-            let _ = radio.transmit(&tx.frame);
+            if let Err(e) = radio.transmit(&tx.frame) {
+                con.str("tx err ");
+                con.dec(e as u32);
+                con.str("\r\n");
+            }
             let _ = radio.start_receive();
             led_until = now + 80;
         }
@@ -323,7 +351,15 @@ fn main() -> ! {
             con.kv("beacons", s.beacons_sent);
             con.kv("retx", s.hop_retransmissions);
             con.kv("bad", s.rx_bad);
-            con.kv("rssi", st.last_rssi_dbm as i32 as u32);
+            con.str("rssi=");
+            if st.last_rssi_dbm < 0 {
+                con.byte(b'-');
+            }
+            con.dec(st.last_rssi_dbm.unsigned_abs() as u32);
+            con.byte(b' ');
+            con.kv("rxerr", rx_errors);
+            con.kv("lasterr", last_rx_err);
+            con.kv("cad", st.cad_busy);
             con.str("\r\n");
         }
         // Idle: a few hundred microseconds between polls keeps the SPI quiet.
