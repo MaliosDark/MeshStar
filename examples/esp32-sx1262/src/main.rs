@@ -147,10 +147,12 @@ fn main() -> ! {
     let mut btn = ui::Button::new();
     let mut last_render = 0u64;
     let boot_ms = now_ms();
-    // Battery: VBAT/4.9 on GPIO1 while ADC_CTRL (GPIO37) is low.
+    // Battery: VBAT/4.9 on GPIO1 while ADC_CTRL (GPIO37) is low. The 390k
+    // divider is a high impedance source for the ADC, so the reading is a
+    // rough one (calibration against a real battery is still pending).
     let mut adc_ctrl = Output::new(peripherals.GPIO37, Level::High);
     let mut adc_cfg = esp_hal::analog::adc::AdcConfig::new();
-    let mut vbat_pin = adc_cfg.enable_pin(peripherals.GPIO1, esp_hal::analog::adc::Attenuation::_11dB);
+    let mut vbat_pin = adc_cfg.enable_pin(peripherals.GPIO1, esp_hal::analog::adc::Attenuation::_2p5dB);
     let mut adc = esp_hal::analog::adc::Adc::new(peripherals.ADC1, adc_cfg);
     let mut last_battery = 0u64;
 
@@ -291,6 +293,18 @@ fn main() -> ! {
                                 }
                             } else if text == "advert" {
                                 compat_last_periodic = 0;
+                            } else if text == "ui" {
+                                // Dump what the screens show (for tests without eyes on the OLED).
+                                println!("ui: screen {:?} battery {:?} compat {:?}", ui.screen, model.battery_mv, model.compat);
+                                for n in model.nodes.iter() {
+                                    println!("ui node: {:?} {} rssi {} {:?} hops {} sleeping {} anchor {}", n.proto, n.name, n.rssi, n.sec, n.hops, n.sleeping, n.anchor);
+                                }
+                                for m in model.msgs.iter() {
+                                    println!("ui msg: {:?} {} [{}] {:?} unread {}: {}", m.proto, m.from, m.channel, m.sec, m.unread, m.text);
+                                }
+                                for n in model.nets.iter() {
+                                    println!("ui net: {:?} {} nodes {} rssi {} frames {}", n.proto, n.name, n.nodes, n.rssi, n.frames);
+                                }
                             } else {
                                 handled = false;
                             }
@@ -349,11 +363,14 @@ fn main() -> ! {
             if now.saturating_sub(last_battery) >= 5000 {
                 last_battery = now;
                 adc_ctrl.set_low();
-                delay.delay_millis(2);
+                delay.delay_millis(10);
+                let _ = nb::block!(adc.read_oneshot(&mut vbat_pin));
                 if let Ok(raw) = nb::block!(adc.read_oneshot(&mut vbat_pin)) {
-                    // 12-bit sample, ~3.1 V full scale at 11 dB, divider 390k/100k.
-                    let mv = raw as u32 * 3100 / 4095 * 49 / 10;
-                    model.battery_mv = if mv > 2500 { Some(mv) } else { None };
+                    // 12-bit sample, ~1.25 V full scale at 2.5 dB, divider 390k/100k
+                    // (x4.9, plus the 4.5 % correction Meshtastic uses for this board).
+                    let mv = raw as u32 * 1250 / 4095 * 49 * 1045 / 10_000;
+                    log::debug!("vbat raw {} -> {} mV", raw, mv);
+                    model.battery_mv = if (3000..=4400).contains(&mv) { Some(mv) } else { None };
                 }
                 adc_ctrl.set_high();
             }

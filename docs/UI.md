@@ -46,7 +46,8 @@ session yet) without a lock. The header shows the protocol badge of the
 active compat mode and, when bridging is enabled, the bridge icon.
 
 Battery is read from VBAT/4.9 on GPIO1 while ADC_CTRL (GPIO37) is low,
-every 5 s; Vext (GPIO36, active low) powers the OLED and is enabled at
+every 5 s (2.5 dB attenuation; USB-only boards read below 3 V and show
+"no gauge"; calibration against a real battery is pending); Vext (GPIO36, active low) powers the OLED and is enabled at
 boot. The button decoder reports a short press on release and one long
 press after 600 ms held.
 
