@@ -35,7 +35,8 @@ pub struct PowerConfig {
 
 impl Default for PowerConfig {
     fn default() -> Self {
-        Self { mode: PowerMode::AlwaysOn, max_airtime_permille: 10, airtime_window_ms: 3_600_000, max_beacon_slowdown: 4, activity_extension_ms: 3_000 }
+        // The extension must outlast a hop retransmission (3 x airtime + 1.5 s).
+        Self { mode: PowerMode::AlwaysOn, max_airtime_permille: 10, airtime_window_ms: 3_600_000, max_beacon_slowdown: 4, activity_extension_ms: 6_000 }
     }
 }
 
@@ -48,6 +49,8 @@ pub struct PowerManager {
     airtime_in_window: u64,
     awake: bool,
     awake_until: u64,
+    /// Start of the current awake period (extensions are capped relative to it).
+    awake_since: u64,
     next_wake: u64,
     /// Beacon intervals without neighbour change.
     stable_intervals: u8,
@@ -64,7 +67,7 @@ pub struct PowerStats {
 
 impl PowerManager {
     pub fn new(cfg: PowerConfig, now: u64) -> Self {
-        Self { cfg, tx_log: alloc::collections::VecDeque::new(), airtime_in_window: 0, awake: true, awake_until: u64::MAX, next_wake: now, stable_intervals: 0, stats: PowerStats::default() }
+        Self { cfg, tx_log: alloc::collections::VecDeque::new(), airtime_in_window: 0, awake: true, awake_until: u64::MAX, awake_since: now, next_wake: now, stable_intervals: 0, stats: PowerStats::default() }
     }
 
     pub fn config(&self) -> &PowerConfig {
@@ -128,10 +131,17 @@ impl PowerManager {
         self.next_wake
     }
 
-    /// Traffic involving us: extend the awake window.
+    /// Traffic involving us: extend the awake window, at most to five
+    /// windows after waking (a busy neighbourhood must not keep a LEAF up).
     pub fn on_activity(&mut self, now: u64) {
         if self.awake && self.awake_until != u64::MAX {
-            self.awake_until = self.awake_until.max(now + self.cfg.activity_extension_ms as u64);
+            let window = match self.cfg.mode {
+                PowerMode::Leaf { awake_window_ms, .. } => awake_window_ms as u64,
+                PowerMode::DutyCycle { listen_ms, .. } => listen_ms as u64,
+                PowerMode::AlwaysOn => return,
+            };
+            let cap = self.awake_since + 5 * window.max(1);
+            self.awake_until = self.awake_until.max(now + self.cfg.activity_extension_ms as u64).min(cap.max(self.awake_until));
         }
     }
 
@@ -157,6 +167,7 @@ impl PowerManager {
             if self.awake_until == u64::MAX {
                 // first tick after construction: start the window now
                 self.awake_until = now + awake_len;
+                self.awake_since = now;
                 return None;
             }
             if now >= self.awake_until {
@@ -168,11 +179,20 @@ impl PowerManager {
         } else if now >= self.next_wake {
             self.awake = true;
             self.awake_until = now + awake_len;
+            self.awake_since = now;
             self.stats.sleep_ms += sleep_len;
             self.stats.wakeups += 1;
             Some(true)
         } else {
             None
+        }
+    }
+
+    /// Postpone the next wake-up by `ms` (random jitter so that LEAF nodes
+    /// sharing a schedule do not wake, beacon and collide in lockstep).
+    pub fn delay_wake(&mut self, ms: u64) {
+        if !self.awake {
+            self.next_wake = self.next_wake.saturating_add(ms);
         }
     }
 
@@ -182,6 +202,7 @@ impl PowerManager {
             self.stats.wakeups += 1;
         }
         self.awake = true;
+        self.awake_since = now;
         self.awake_until = now + window_ms as u64;
     }
 

@@ -91,8 +91,8 @@ fn leaf_anchor_store_and_forward() {
     // Leaf is awake at start: everybody meets, leaf attaches to the anchor.
     m.run(2_500);
     assert!(m.nodes[anchor].neighbors().get(&m.nodes[leaf].address()).map(|n| n.is_leaf()).unwrap_or(false));
-    // Wait for the leaf to sleep.
-    m.run(4_000);
+    // Wait for the leaf to sleep (activity extensions are capped at 5 windows).
+    m.run(16_000);
     assert!(!m.nodes[leaf].is_awake());
     let leaf_addr = m.nodes[leaf].address();
     let h = m.nodes[sender].send_message(leaf_addr, b"read me later", Reliability::StoreAndForward).unwrap();
@@ -276,7 +276,7 @@ fn anchor_mailbox_exhaustion_is_bounded() {
     let leaf = m.add(leaf_cfg, 102);
     m.link(sender, anchor);
     m.link(anchor, leaf);
-    m.run(6_000);
+    m.run(16_000);
     assert!(!m.nodes[leaf].is_awake());
     let leaf_addr = m.nodes[leaf].address();
     let mut handles = Vec::new();

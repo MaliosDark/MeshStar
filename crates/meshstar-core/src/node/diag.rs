@@ -60,6 +60,8 @@ pub struct Counters {
     pub hop_reroutes: u32,
     pub m3_resends: u32,
     pub sessions_reset: u32,
+    pub keys_from_replies: u32,
+    pub key_requests_sent: u32,
     pub no_session_notices: u32,
     pub link_acks_sent: u32,
 }

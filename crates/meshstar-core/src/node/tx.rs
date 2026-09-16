@@ -315,6 +315,7 @@ impl Node {
             self.next_beacon = now + self.cfg.neighbor.beacon_interval_ms;
         }
 
+        self.last_beacon_at = now;
         self.beacon_seq = self.beacon_seq.wrapping_add(1);
         let full = self.beacons_sent.is_multiple_of(self.cfg.neighbor.full_beacon_every.max(1) as u32) || self.cfg.role == Role::Leaf;
         self.beacons_sent += 1;
@@ -331,9 +332,9 @@ impl Node {
                 b.attached.push(a);
             }
         }
-        if self.cfg.role == Role::Anchor {
+        if self.cfg.role.relays() {
             b.mailbox_available = self.mailbox.as_ref().map(|m| m.has_space()).unwrap_or(false);
-            b.attached = self.neighbors.leaves().map(|n| n.addr).take(8).collect();
+            b.attached = self.neighbors.hosted_leaves().map(|n| n.addr).take(8).collect();
         }
         let net_auth = self.cfg.network_key.is_some();
         let budget = max_payload(net_auth);
@@ -350,7 +351,10 @@ impl Node {
         }
         let h = self.base_header(PacketType::Beacon, Address::BROADCAST, 1);
         self.counters.beacons_sent += 1;
-        self.enqueue_packet(Packet::new(h, b.encode()), now, prio::BEACON, false);
+        // A LEAF's beacon is its wake-up announcement: it goes before
+        // anything else queued while it slept.
+        let pr = if self.cfg.role == Role::Leaf { prio::CONTROL } else { prio::BEACON };
+        self.enqueue_packet(Packet::new(h, b.encode()), now, pr, false);
     }
 
     // ----- route control -----------------------------------------------------
@@ -365,6 +369,9 @@ impl Node {
         // Piggyback Noise message 1 when we are about to open a session
         // with the target: the reply can carry message 2 back.
         let handshake = self.handshakes.get(&target).filter(|h| h.hs.role() == crate::crypto::NoiseRole::Initiator).map(|h| h.m1.clone()).unwrap_or_default();
+        if rflags & rreq_flags::WANT_KEY != 0 {
+            self.counters.key_requests_sent += 1;
+        }
         let q = RouteRequest { target, cost: 0, flags: rflags, handshake };
         self.counters.rreq_sent += 1;
         self.enqueue_packet(Packet::new(h, q.encode()), now, prio::BEACON, false);
@@ -430,6 +437,10 @@ impl Node {
     }
 
     pub(crate) fn send_fetch(&mut self, anchor: Address, now: u64) {
+        // Never fetch from another LEAF.
+        if self.neighbors.get(&anchor).map(|n| !n.role.relays()).unwrap_or(false) {
+            return;
+        }
         let q = QueuedSend { dst: anchor, payload: alloc::vec![8u8], reliability: Reliability::Unreliable, handle: 0, queued_at: now };
         if self.sessions.contains_key(&anchor) {
             let s = self.transport.next_seq();
@@ -546,9 +557,9 @@ impl Node {
     /// Choose between direct delivery and an anchor deposit.
     pub(crate) fn deliver_envelope(&mut self, dst: Address, envelope_id: u32, env: Vec<u8>, now: u64) {
         // Destination is a sleeping leaf we host: mailbox directly.
-        if self.cfg.role == Role::Anchor {
+        if self.cfg.role.relays() {
             if let Some(n) = self.neighbors.get(&dst) {
-                if n.is_leaf() {
+                if n.is_leaf() && (n.attached_to_me || n.attached.is_empty()) {
                     let req = StoreRequest { dst, envelope_id, ttl_s: self.cfg.envelope_ttl_s, envelope: env.clone() };
                     let me = self.address();
                     if let Some(m) = self.mailbox.as_mut() {
@@ -563,7 +574,9 @@ impl Node {
                 }
             }
         }
-        // Anchor known for the destination (zone or route)?
+        // Anchor known for the destination (zone or route)? A LEAF that has
+        // no known anchor still goes through our best anchor neighbour: a
+        // direct delivery to a sleeping node never gets acknowledged.
         let anchor = self.zone.anchor_for(&dst).or_else(|| self.routes.lookup(&dst, now).and_then(|r| r.via_anchor));
         if let Some(a) = anchor {
             self.send_store(a, dst, envelope_id, env, now);

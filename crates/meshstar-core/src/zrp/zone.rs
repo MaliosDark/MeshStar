@@ -202,12 +202,13 @@ impl ZoneTable {
         any || neighbors.iter().all(|n| &n.addr == transmitter || !n.role.relays())
     }
 
-    /// Anchor hosting a sleeping leaf, if known.
+    /// Host (ANCHOR or any always-on node) of a leaf learned from the host's
+    /// attached list, if known.
     pub fn anchor_for(&self, leaf: &Address) -> Option<Address> {
         let n = self.nodes.get(leaf)?;
-        if n.is_leaf() && n.distance >= 2 {
+        if n.is_leaf() && n.distance >= 2 && n.is_sleeping() {
             let via = self.nodes.get(&n.next_hop)?;
-            if via.is_anchor() {
+            if !via.is_leaf() {
                 return Some(via.addr);
             }
         }

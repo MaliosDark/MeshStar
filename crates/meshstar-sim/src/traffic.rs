@@ -106,12 +106,14 @@ impl TrafficGen {
             let interval = self.interval_ms().max(1);
             // exponential-ish spacing: uniform in [0.5, 1.5] * interval
             self.next_at += interval / 2 + rng.next_u64() % interval.max(1);
-            // Sleeping LEAF nodes only take part in store-and-forward traffic
-            // (or the explicit ToLeaves pattern); everything else runs
-            // between always-on nodes, as a real deployment would.
+            // Sources are always-on nodes (a sleeping LEAF sends when it wakes
+            // and is covered by the ToLeaves/StoreAndForward destinations);
+            // destinations include LEAF nodes only for store-and-forward
+            // traffic or the explicit ToLeaves pattern.
+            let src_pool: &[usize] = if self.always_on.is_empty() { &[] } else { &self.always_on };
             let pool: &[usize] = if self.params.reliability == Reliability::StoreAndForward || self.always_on.is_empty() { &[] } else { &self.always_on };
             let pick = |rng: &mut dyn RngCore| -> usize { if pool.is_empty() { (rng.next_u32() as usize) % n } else { pool[(rng.next_u32() as usize) % pool.len()] } };
-            let src = pick(rng);
+            let src = if src_pool.is_empty() { (rng.next_u32() as usize) % n } else { src_pool[(rng.next_u32() as usize) % src_pool.len()] };
             let broadcast = (rng.next_u32() % 1000) as f32 / 1000.0 < self.params.broadcast_fraction;
             let dst = match self.params.pattern {
                 TrafficPattern::RandomPairs => pick(rng),

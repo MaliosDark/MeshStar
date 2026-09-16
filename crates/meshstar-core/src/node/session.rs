@@ -176,11 +176,10 @@ impl Node {
         self.counters.handshakes_completed += 1;
         self.emit(NodeEvent::SessionEstablished(peer));
         self.try_pending_envelopes(peer, now);
-        // A LEAF attaches to the first ANCHOR it talks to.
-        if self.cfg.role == crate::protocol::Role::Leaf && self.attached_anchor.is_none()
-            && self.neighbors.get(&peer).map(|n| n.role == crate::protocol::Role::Anchor).unwrap_or(false) {
-                self.attached_anchor = Some(peer);
-            }
+        // A LEAF without a host adopts the first always-on node it talks to.
+        if self.cfg.role == crate::protocol::Role::Leaf && self.attached_anchor.is_none() && self.neighbors.get(&peer).map(|n| n.role.relays()).unwrap_or(false) {
+            self.attached_anchor = Some(peer);
+        }
     }
 
     fn drain_queued(&mut self, peer: Address, queued: Vec<QueuedSend>, now: u64) {
@@ -192,6 +191,10 @@ impl Node {
                 let s = self.transport.next_seq();
                 let _ = self.send_session_packet(peer, PacketType::Store, &q.payload, s, false, now);
                 self.counters.store_sent += 1;
+            } else if q.handle == super::QUEUED_CONTROL {
+                if let Some((&sub, body)) = q.payload.split_first() {
+                    self.send_control(peer, sub, body, now);
+                }
             } else if q.reliability == Reliability::StoreAndForward {
                 self.queue_envelope(q.dst, q.payload, q.handle, now);
             } else {

@@ -70,6 +70,8 @@ pub struct Neighbor {
     pub awake_until: Option<u64>,
     /// Anchors this neighbour is attached to (LEAF) or hosts (ANCHOR).
     pub attached: Vec<Address>,
+    /// LEAF neighbour that named us as its host in its beacon.
+    pub attached_to_me: bool,
     /// Packets received from this neighbour (any type).
     pub packets: u32,
     /// Direct transmissions to this neighbour that were never acknowledged
@@ -102,6 +104,7 @@ impl Neighbor {
             sleep_interval_s: 0,
             awake_until: None,
             attached: Vec::new(),
+            attached_to_me: false,
             packets: 0,
             failures: 0,
             snr_floor_db: -10.0,
@@ -237,8 +240,13 @@ impl NeighborTable {
         (self.cfg.beacon_interval_ms + self.cfg.beacon_jitter_ms) * self.cfg.timeout_intervals as u64
     }
 
-    /// Process a beacon from `src`.
+    /// Process a beacon from `src`. `me` is our own address (to notice LEAF
+    /// nodes that attach to us).
     pub fn observe_beacon(&mut self, now: u64, src: Address, b: &Beacon, meta: &RxMeta) -> BeaconObservation {
+        self.observe_beacon_as(now, src, b, meta, None)
+    }
+
+    pub fn observe_beacon_as(&mut self, now: u64, src: Address, b: &Beacon, meta: &RxMeta, me: Option<Address>) -> BeaconObservation {
         let mut obs = BeaconObservation { is_new: false, identity_verified: false, identity_rejected: false };
         // Verify full identity before touching the table.
         let mut verified: Option<PublicIdentity> = None;
@@ -296,6 +304,9 @@ impl NeighborTable {
         n.battery_percent = b.battery_percent;
         n.sleep_interval_s = b.sleep_interval_s;
         n.attached = b.attached.clone();
+        if b.role == Role::Leaf {
+            n.attached_to_me = me.map(|m| b.attached.contains(&m)).unwrap_or(false);
+        }
         if let Some(prev) = n.last_beacon_seq {
             let gap = b.seq.wrapping_sub(prev);
             if gap == 0 {
@@ -387,6 +398,22 @@ impl NeighborTable {
 
     pub fn leaves(&self) -> impl Iterator<Item = &Neighbor> {
         self.map.values().filter(|n| n.is_leaf())
+    }
+
+    /// Best host for a LEAF: link quality with a bonus for ANCHORs (they
+    /// have the large mailbox and stay on), never another LEAF.
+    pub fn best_host(&self) -> Option<&Neighbor> {
+        self.map.values().filter(|n| n.role.relays()).max_by_key(|n| n.link_quality() as u32 + if n.role == Role::Anchor { 60 } else { 0 })
+    }
+
+    /// LEAF neighbours that chose us as their host (or named no host yet).
+    pub fn hosted_leaves(&self) -> impl Iterator<Item = &Neighbor> {
+        self.map.values().filter(|n| n.is_leaf() && (n.attached_to_me || n.attached.is_empty()))
+    }
+
+    /// Whether `a` is a LEAF we host.
+    pub fn hosts(&self, a: &Address) -> bool {
+        self.map.get(a).map(|n| n.is_leaf() && (n.attached_to_me || n.attached.is_empty())).unwrap_or(false)
     }
 }
 

@@ -56,6 +56,10 @@ impl Node {
         }
         let key = p.header.key();
         let for_me = p.header.dst == me;
+        if for_me {
+            // Anything addressed to us keeps a LEAF awake a little longer.
+            self.power.on_activity(now);
+        }
         // Plaintext link acknowledgement from a neighbour.
         if p.header.ptype == PacketType::Control && for_me && p.payload.len() == 5 && p.payload[0] == control::LINK_ACK {
             if let Some(pv) = prev {
@@ -189,7 +193,8 @@ impl Node {
             }
         };
         self.counters.beacons_received += 1;
-        let obs = self.neighbors.observe_beacon(now, src, &b, meta);
+        let me_addr = self.address();
+        let obs = self.neighbors.observe_beacon_as(now, src, &b, meta, Some(me_addr));
         if obs.identity_rejected {
             self.counters.auth_failures += 1;
             return;
@@ -208,8 +213,16 @@ impl Node {
         // Direct neighbour: best possible route.
         let cost = self.link_cost_to(&src);
         self.learn_route(src, src, 1, cost, RouteSource::Zone, None, now);
+        // A LEAF that just woke up hears almost nothing by chance: hosts
+        // answer its beacon with their own (jittered) so it can attach.
+        // Only its host (or every host while it has none) answers, not the
+        // whole neighbourhood.
+        if b.role == Role::Leaf && self.cfg.role.relays() && (b.attached.is_empty() || b.attached.contains(&self.address())) && now.saturating_sub(self.last_beacon_at) > 10_000 {
+            let j = 150 + self.rng.next_u64() % 900;
+            self.next_beacon = self.next_beacon.min(now + j);
+        }
         match (self.cfg.role, b.role) {
-            (Role::Anchor, Role::Leaf) => {
+            (host, Role::Leaf) if host.relays() => {
                 // The leaf is awake: flush its mailbox and release held packets.
                 self.flush_mailbox_to(src, now);
                 let held: Vec<Packet> = {
@@ -223,12 +236,19 @@ impl Node {
                     self.enqueue_packet(hp, now, prio::DATA, true);
                 }
             }
-            (Role::Leaf, Role::Anchor)
-                if self.attached_anchor.is_none() => {
-                    self.attached_anchor = Some(src);
-                    // Establish the anchor session right away so FETCH works.
-                    self.send_fetch(src, now);
+            (Role::Leaf, host) if host.relays() => {
+                // Pick the best host we can hear; switch only for a clear gain.
+                let score = |n: &crate::neighbor::Neighbor| n.link_quality() as u32 + if n.role == Role::Anchor { 60 } else { 0 };
+                let current = self.attached_anchor.and_then(|a| self.neighbors.get(&a)).map(score);
+                if let Some(best) = self.neighbors.best_host() {
+                    let better = current.map(|c| score(best) > c + 30).unwrap_or(true);
+                    if better && self.attached_anchor != Some(best.addr) {
+                        let b = best.addr;
+                        self.attached_anchor = Some(b);
+                        self.send_fetch(b, now);
+                    }
                 }
+            }
             _ => {}
         }
     }
@@ -285,18 +305,22 @@ impl Node {
             return;
         }
         let dst = p.header.dst;
-        // ANCHOR holding traffic for a sleeping LEAF neighbour.
-        if self.cfg.role == Role::Anchor {
+        // Host holding traffic for a sleeping LEAF neighbour we host.
+        if self.cfg.role.relays() {
             if let Some(n) = self.neighbors.get(&dst) {
-                if n.is_leaf() && n.is_sleeping(now) {
+                if n.is_leaf() && n.is_sleeping(now) && (n.attached_to_me || n.attached.is_empty()) {
                     if p.header.has(flags::ENVELOPE) && p.header.has(flags::STORE_FORWARD) && !p.header.has(flags::FRAGMENTED) {
                         if let Ok((id, env)) = parse_envelope_frame(&p.payload) {
                             let req = StoreRequest { dst, envelope_id: id, ttl_s: self.cfg.envelope_ttl_s, envelope: env.to_vec() };
                             let depositor = p.header.src;
-                            if let Some(m) = self.mailbox.as_mut() {
-                                let _ = m.store(now, depositor, req);
+                            let stored = match self.mailbox.as_mut() {
+                                Some(m) => matches!(m.store(now, depositor, req), Ok(()) | Err(reject_reason::DUPLICATE)),
+                                None => false,
+                            };
+                            if stored {
+                                return;
                             }
-                            return;
+                            // mailbox full: fall through and hold the packet itself
                         }
                     }
                     let hold_ms = (n.sleep_interval_s as u64 * 1000).max(10_000);
@@ -392,10 +416,10 @@ impl Node {
             return;
         }
         let known_key = self.key_dir.get(&q.target).map(|k| k.public_key_bytes());
-        // 2. ANCHOR proxy for an attached LEAF (sleeping or not).
-        if self.cfg.role == Role::Anchor && q.flags & rreq_flags::PROXY_OK != 0 {
+        // 2. Host proxy for a LEAF neighbour (sleeping or not).
+        if self.cfg.role.relays() && q.flags & rreq_flags::PROXY_OK != 0 {
             if let Some(n) = self.neighbors.get(&q.target) {
-                if n.is_leaf() {
+                if n.is_leaf() && (n.attached_to_me || n.attached.is_empty()) {
                     let cost = link_cost(n.link_quality(), 0);
                     self.ierp.proxy_replies_sent += 1;
                     self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: 1, cost, flags: rrep_flags::PROXY | rrep_flags::TARGET_LEAF, target_key: if want_key { known_key } else { None }, handshake: Vec::new() }, now);
@@ -410,7 +434,7 @@ impl Node {
         //    flood hop (measured in the simulator), so intra-zone knowledge
         //    is used to route and to prune, not to reply.
         if let Some(z) = self.zone.get(&q.target).copied() {
-            if let Some(anchor) = self.zone.anchor_for(&q.target) {
+            if let Some(anchor) = self.zone.anchor_for(&q.target).filter(|_| !want_key || known_key.is_some()) {
                 // Sleeping leaf behind an anchor in our zone: point at the anchor.
                 let cost = (z.distance as u32 * link_cost(z.quality, 0) as u32).min(u16::MAX as u32) as u16;
                 self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: z.distance, cost, flags: rrep_flags::PROXY | rrep_flags::TARGET_LEAF, target_key: if want_key { known_key } else { None }, handshake: Vec::new() }, now);
@@ -466,6 +490,7 @@ impl Node {
         if let Some(k) = r.target_key {
             if let Ok(id) = PublicIdentity::from_bytes(&k) {
                 if id.address() == r.target {
+                    self.counters.keys_from_replies += 1;
                     self.key_dir.insert(r.target, id);
                     self.try_pending_envelopes(r.target, now);
                 } else {
@@ -637,13 +662,19 @@ impl Node {
             } else {
                 self.transport.stats.duplicates_dropped += 1;
             }
-            // Tell the mailbox holder (if the frame came from an anchor) and the sender.
+            // Tell the mailbox holder (if the frame came from a host) and the sender.
             if src != from {
-                self.send_control(src, control::MAILBOX_ACK, &envelope_id.to_be_bytes(), now);
-                if !self.sessions.contains_key(&src) {
-                    // Cannot authenticate the mailbox ack yet: open a session, the
-                    // anchor will retry delivery and we ack then.
+                if self.sessions.contains_key(&src) {
+                    self.send_control(src, control::MAILBOX_ACK, &envelope_id.to_be_bytes(), now);
+                } else {
+                    // The ack must be authenticated (it deletes mail): open a
+                    // session with the host and send it as soon as it is up.
                     self.start_handshake(src, now);
+                    if let Some(h) = self.handshakes.get_mut(&src) {
+                        let mut payload = alloc::vec![control::MAILBOX_ACK];
+                        payload.extend_from_slice(&envelope_id.to_be_bytes());
+                        h.queued.push(super::QueuedSend { dst: src, payload, reliability: crate::protocol::Reliability::Unreliable, handle: super::QUEUED_CONTROL, queued_at: now });
+                    }
                 }
             }
             if let Ok(ack_env) = seal_envelope(&self.id, &sender, envelope_id, b"D", &mut self.rng) {
@@ -741,6 +772,10 @@ impl Node {
                     self.flush_mailbox_to(dst, now);
                 }
             }
+            Err(reason) if reason == reject_reason::DUPLICATE => {
+                // A retried deposit: the envelope is already safe here.
+                self.send_control(src, control::STORE_ACCEPTED, &encode_store_result(id, None), now);
+            }
             Err(reason) => {
                 self.send_control(src, control::STORE_REJECTED, &encode_store_result(id, Some(reason)), now);
             }
@@ -752,7 +787,7 @@ impl Node {
         if self.open_session_payload(p, now).is_none() {
             return;
         }
-        if self.cfg.role != Role::Anchor {
+        if self.mailbox.is_none() {
             return;
         }
         if let Some(n) = self.neighbors.get_mut(&src) {
@@ -775,6 +810,11 @@ impl Node {
                         if let Some(o) = self.transport.outstanding().iter().find(|o| o.envelope_id == Some(id)) {
                             let handle = o.handle;
                             self.emit(NodeEvent::Stored { handle, anchor: src });
+                        }
+                    } else if let Some(m) = self.mailbox.as_mut() {
+                        // Mail we forwarded to the leaf's current host: drop our copy.
+                        if let Some(dst) = m.entries().iter().find(|e| e.envelope_id == id).map(|e| e.dst) {
+                            m.delivered(&dst, id);
                         }
                     }
                 }

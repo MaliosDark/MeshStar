@@ -181,6 +181,9 @@ pub struct TxItem {
     pub dst: Address,
 }
 
+/// Handle marker: a queued raw CONTROL payload (sub-type byte first).
+pub(crate) const QUEUED_CONTROL: u32 = u32::MAX - 1;
+
 /// Application send queued until a session exists.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -251,6 +254,7 @@ pub struct Node {
     pub(crate) beacon_seq: u16,
     pub(crate) next_beacon: u64,
     pub(crate) beacons_sent: u32,
+    pub(crate) last_beacon_at: u64,
     pub(crate) last_neighbor_count: usize,
     pub(crate) next_handle: u32,
     pub(crate) frag_id: u16,
@@ -265,6 +269,9 @@ pub struct Node {
     /// time spent asleep).
     pub(crate) last_wake: u64,
     pub(crate) slept_at: u64,
+    /// LEAF: FETCH scheduled after the wake-up beacon, sent only if the
+    /// host did not react to the beacon by then.
+    pub(crate) pending_fetch: Option<(Address, u64, u32)>,
     /// ANCHOR: packets held for a sleeping LEAF neighbour, (leaf, packet, expires).
     pub(crate) held_for_sleeping: Vec<(Address, Packet, u64)>,
     /// Unicast packets awaiting a hop acknowledgement.
@@ -292,13 +299,21 @@ impl core::fmt::Debug for Node {
 
 impl Node {
     pub fn new(cfg: NodeConfig, id: Identity, mut rng: Rng, now: u64) -> Self {
-        let mailbox = if cfg.role == Role::Anchor { Some(Mailbox::new(cfg.mailbox)) } else { None };
+        // Every always-on node can host its LEAF neighbours (proxy replies,
+        // held packets, a small mailbox); ANCHORs have the full mailbox.
+        let mailbox = match cfg.role {
+            Role::Anchor => Some(Mailbox::new(cfg.mailbox)),
+            Role::Normal => Some(Mailbox::new(MailboxConfig { max_entries: cfg.mailbox.max_entries / 8, max_bytes: cfg.mailbox.max_bytes / 8, max_per_destination: 2.max(cfg.mailbox.max_per_destination / 4), ..cfg.mailbox })),
+            Role::Leaf => None,
+        };
         let first_seq = (rng.next_u32() as u16) | 1;
         let mut cfg = cfg;
         cfg.max_ttl = cfg.max_ttl.max(1);
         cfg.default_ttl = cfg.default_ttl.clamp(1, cfg.max_ttl);
         let jitter = rng.next_u64() % (cfg.neighbor.beacon_jitter_ms.max(1));
         cfg.neighbor.snr_floor_db = cfg.profile.demod_snr_db();
+        // (LEAF wake-ups desynchronise through the per-cycle jitter in poll.)
+        let power = PowerManager::new(cfg.power, now);
         Self {
             neighbors: NeighborTable::new(cfg.neighbor),
             zone: ZoneTable::new(cfg.zrp.zone_radius, cfg.zrp.max_zone_entries, cfg.neighbor.beacon_interval_ms * cfg.neighbor.timeout_intervals as u64 * 2),
@@ -309,7 +324,7 @@ impl Node {
             sched: RebroadcastScheduler::new(),
             transport: Transport::new(cfg.transport, first_seq),
             mailbox,
-            power: PowerManager::new(cfg.power, now),
+            power,
             reassembler: Reassembler::new(cfg.reassembly),
             sessions: BTreeMap::new(),
             handshakes: BTreeMap::new(),
@@ -320,6 +335,7 @@ impl Node {
             beacon_seq: rng.next_u32() as u16,
             next_beacon: now + 500 + jitter,
             beacons_sent: 0,
+            last_beacon_at: 0,
             last_neighbor_count: 0,
             next_handle: 1,
             frag_id: rng.next_u32() as u16,
@@ -330,6 +346,7 @@ impl Node {
             last_housekeeping: now,
             last_wake: now,
             slept_at: now,
+            pending_fetch: None,
             held_for_sleeping: Vec::new(),
             hop_pending: Vec::new(),
             cfg,
@@ -524,6 +541,11 @@ impl Node {
             }
             Some(false) => {
                 self.slept_at = now;
+                // Desynchronise wake-ups: up to 20 % of the sleep interval.
+                if let crate::power::PowerMode::Leaf { wake_interval_s, .. } = self.cfg.power.mode {
+                    let span = (wake_interval_s as u64 * 1000 / 5).max(1);
+                    self.power.delay_wake(self.rng.next_u64() % span);
+                }
                 self.emit(NodeEvent::PowerState { awake: false });
                 self.tx_queue.retain(|i| i.priority == 0);
             }
@@ -535,6 +557,14 @@ impl Node {
 
         if now >= self.next_beacon {
             self.send_beacon(now);
+        }
+        if let Some((host, due, rx_before)) = self.pending_fetch {
+            if now >= due {
+                self.pending_fetch = None;
+                if self.counters.rx_for_us == rx_before {
+                    self.send_fetch(host, now);
+                }
+            }
         }
 
         // Relays whose slot arrived.
@@ -700,8 +730,9 @@ impl Node {
             self.start_handshake(a, now);
         }
         // Pending envelopes waiting for a key too long.
-        let stale: Vec<PendingEnvelope> = self.pending_envelopes.iter().filter(|p| now.saturating_sub(p.queued_at) > 60_000).cloned().collect();
-        self.pending_envelopes.retain(|p| now.saturating_sub(p.queued_at) <= 60_000);
+        // A full expanding-ring discovery can take ~90 s: wait for it.
+        let stale: Vec<PendingEnvelope> = self.pending_envelopes.iter().filter(|p| now.saturating_sub(p.queued_at) > 180_000).cloned().collect();
+        self.pending_envelopes.retain(|p| now.saturating_sub(p.queued_at) <= 180_000);
         for p in stale {
             self.emit(NodeEvent::Failed { handle: p.handle, to: p.dst, reason: FailReason::NoKey });
         }
@@ -713,6 +744,15 @@ impl Node {
                 let awake = self.neighbors.get(&d).map(|n| !n.is_sleeping(now)).unwrap_or(false);
                 if awake {
                     self.flush_mailbox_to(d, now);
+                } else if !self.neighbors.contains(&d) {
+                    // The leaf is not ours any more: hand its mail to the host
+                    // that currently advertises it (deleted here on acceptance).
+                    if let Some(host) = self.zone.anchor_for(&d).filter(|h| *h != self.address()) {
+                        let items = self.mailbox.as_mut().map(|m| m.take_deliverable(&d, now, 2)).unwrap_or_default();
+                        for (id, env) in items {
+                            self.send_store(host, d, id, env, now);
+                        }
+                    }
                 }
             }
         }
@@ -754,13 +794,17 @@ impl Node {
         }
     }
 
-    /// LEAF just woke up: announce, then fetch mail from the anchor.
+    /// LEAF just woke up: announce first (the beacon makes the host flush
+    /// its mailbox), and FETCH a little later only if nothing arrived.
     fn on_wake(&mut self, now: u64) {
         self.next_beacon = now; // beacon immediately
         if self.cfg.role == Role::Leaf {
-            if let Some(anchor) = self.attached_anchor.or_else(|| self.neighbors.best_anchor().map(|n| n.addr)) {
+            // Attach to an ANCHOR if one is in range, else to the best
+            // relaying neighbour (any always-on node can host a LEAF).
+            if let Some(anchor) = self.attached_anchor.filter(|a| self.neighbors.get(a).map(|n| n.role.relays()).unwrap_or(true)).or_else(|| self.neighbors.best_host().map(|n| n.addr)) {
                 self.attached_anchor = Some(anchor);
-                self.send_fetch(anchor, now);
+                let beacon_air = self.cfg.profile.airtime_ms(160) as u64;
+                self.pending_fetch = Some((anchor, now + beacon_air + 1_500, self.counters.rx_for_us));
             }
         }
     }
