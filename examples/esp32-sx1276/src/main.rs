@@ -11,6 +11,8 @@ extern crate alloc;
 
 #[path = "../../common/console.rs"]
 mod console;
+#[path = "../../common/ui.rs"]
+mod ui;
 
 use alloc::vec::Vec;
 
@@ -84,6 +86,8 @@ fn main() -> ! {
     let mut rng_seed = [0u8; 32];
     rng.fill_bytes(&mut rng_seed);
 
+    let delay = Delay::new();
+
     // Radio.
     let spi = Spi::new(peripherals.SPI2, SpiConfig::default().with_frequency(8.MHz()).with_mode(SpiMode::_0))
         .expect("spi")
@@ -107,12 +111,27 @@ fn main() -> ! {
     let mut node = Node::new(cfg, identity, rng_from_seed(rng_seed), now_ms());
     println!("MeshStar {} role {} profile {}", node.address(), node.role().name(), profile);
 
+    // OLED (SSD1306 over I2C) and the page button.
+    let mut oled_rst = Output::new(peripherals.GPIO16, Level::Low);
+    delay.delay_millis(10);
+    oled_rst.set_high();
+    let i2c = esp_hal::i2c::master::I2c::new(peripherals.I2C0, esp_hal::i2c::master::Config::default().with_frequency(400.kHz()))
+        .expect("i2c")
+        .with_sda(peripherals.GPIO4)
+        .with_scl(peripherals.GPIO15);
+    let mut oled = ui::Ssd1306::new(i2c, 0x3C);
+    let have_oled = oled.init().is_ok();
+    let button = Input::new(peripherals.GPIO0, Pull::Up);
+    let mut page = ui::Page::Status;
+    let mut button_was_down = false;
+    let mut last_render = 0u64;
+    let boot_ms = now_ms();
+
     // Console on UART0.
     let mut uart: Uart<'_, Blocking> = Uart::new(peripherals.UART0, esp_hal::uart::Config::default()).expect("uart");
     let mut console = console::Console::new();
     let mut rx_buf = [0u8; 255];
     let mut uart_buf = [0u8; 64];
-    let delay = Delay::new();
     let mut lbt_rng = rng_from_seed(rng_seed);
 
     loop {
@@ -162,6 +181,19 @@ fn main() -> ! {
                 let mut out = Writer(&mut uart);
                 console.feed(&uart_buf[..n], &mut node, stats, &mut out);
             }
+        }
+        // UI: button cycles pages; redraw at 2 Hz.
+        let down = button.is_low();
+        if down && !button_was_down {
+            page = page.next();
+            last_render = 0;
+        }
+        button_was_down = down;
+        let now = now_ms();
+        if have_oled && now.saturating_sub(last_render) >= 500 {
+            last_render = now;
+            let stats = radio.stats();
+            ui::render(&mut oled, page, &mut node, &stats, None, (now - boot_ms) / 1000);
         }
         // Sleep until something is due (light sleep is left to the board integrator).
         let wake = node.next_wakeup();
