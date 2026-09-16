@@ -175,7 +175,7 @@ fn main() -> ! {
             }
         }
         // Console.
-        if let Ok(n) = uart.read_bytes(&mut uart_buf) {
+        if let Ok(n) = uart.read_buffered_bytes(&mut uart_buf) {
             if n > 0 {
                 let stats = radio.stats();
                 let mut out = Writer(&mut uart);
@@ -204,9 +204,9 @@ fn main() -> ! {
     }
 }
 
-struct Writer<'a>(&'a mut Uart<'a, Blocking>);
+struct Writer<'a, 'b>(&'a mut Uart<'b, Blocking>);
 
-impl core::fmt::Write for Writer<'_> {
+impl core::fmt::Write for Writer<'_, '_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let _ = self.0.write_bytes(s.as_bytes());
         Ok(())

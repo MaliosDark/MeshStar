@@ -108,7 +108,7 @@ pub fn parse(image: &[u8]) -> Vec<NvsEntry> {
     }
     let ns_name = |id: u8| namespaces.iter().find(|(n, _)| *n == id).map(|(_, s)| s.clone()).unwrap_or_else(|| alloc::format!("ns{}", id));
     let mut out = Vec::new();
-    for (ns, key, ty, chunk, payload, data) in &raw {
+    for (ns, key, ty, _chunk, payload, data) in &raw {
         let value = match *ty {
             T_U8 => NvsValue::U64(data[0] as u64),
             T_I8 => NvsValue::I64(data[0] as i8 as i64),

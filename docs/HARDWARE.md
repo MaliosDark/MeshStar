@@ -4,8 +4,8 @@
 
 | MCU | radio | boards | status |
 |---|---|---|---|
-| ESP32 / ESP32-S3 | SX1262 | Heltec WiFi LoRa 32 V3, LilyGO T-Beam Supreme, T3S3 | driver crate + example (not yet flashed) |
-| ESP32 | SX1276 / SX1278 | Heltec V2, TTGO LoRa32, T-Beam v1.x | driver crate + example (not yet flashed) |
+| ESP32-S3 | SX1262 | Heltec WiFi LoRa 32 V3 | **running**: two boards exchange beacons, discover routes, complete Noise XX sessions and deliver acknowledged messages (2026-09-16) |
+| ESP32 | SX1276 / SX1278 | Heltec V2, TTGO LoRa32, T-Beam v1.x | driver crate + example, not yet flashed |
 | host (Linux/macOS) | none | simulator, CLI | working |
 
 `meshstar-core` is `no_std` + `alloc`, `#![forbid(unsafe_code)]`, and needs
@@ -69,14 +69,28 @@ loop {
 The serial console exposes the same vocabulary as `meshstar shell`
 (`id`, `nb`, `rt`, `zone`, `ss`, `cnt`, `store`, `radio`, `power`, `send`).
 
-## Building the examples
+## Building and flashing the examples
 
 ```
-cargo install espup && espup install      # Xtensa/RISC-V toolchains
-. ~/export-esp.sh
-cd examples/esp32-sx1262 && cargo build --release
-espflash flash --monitor target/xtensa-esp32s3-none-elf/release/meshstar-esp32-sx1262
+cargo install espup && espup install --targets esp32s3,esp32   # Xtensa toolchain
+pip install --user esptool pyserial
+tools/flash_example.sh esp32-sx1262 /dev/ttyUSB0            # app partition only
+tools/flash_example.sh esp32-sx1262 /dev/ttyUSB0 full       # + bootloader + partition table
+python3 -m serial.tools.miniterm --dtr 0 --rts 0 /dev/ttyUSB0 115200
 ```
+
+Notes learned on real boards:
+
+* `espflash` 4.x refuses ELFs without the ESP-IDF app descriptor, which
+  `esp-hal` 0.23 does not emit; the script converts the ELF with
+  `esptool elf2image` and writes it with `esptool write-flash` instead.
+* Opening the serial port with DTR/RTS asserted resets the board; use
+  `--dtr 0 --rts 0` (or `dtr=False, rts=False` in pyserial) to monitor
+  without rebooting it.
+* A board that ran the original MeshStar firmware keeps its Ed25519
+  identity: the example reads it from the NVS partition.
+* Build with `-j 2` on machines with less than ~8 GB free; the first build
+  compiles esp-hal and takes a few minutes.
 
 The examples are excluded from the workspace because they need those
 toolchains; the driver crates themselves build on the host and have tests
