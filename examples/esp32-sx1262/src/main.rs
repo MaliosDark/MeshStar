@@ -43,6 +43,12 @@ fn now_ms() -> u64 {
     esp_hal::time::now().duration_since_epoch().to_millis()
 }
 
+/// ESP-IDF NVS partition of the original MeshStar firmware (see
+/// docs/research/ORIGINAL_FIRMWARE_NOTES.md): if it still holds the
+/// `meshstar/ed25519_sk` key, the node keeps its original identity.
+const NVS_ADDR: u32 = 0x9000;
+const NVS_LEN: usize = 0x6000;
+
 fn load_or_create_seed(flash: &mut FlashStorage, rng: &mut Rng) -> [u8; 32] {
     let mut buf = [0u8; 36];
     let _ = flash.read(SEED_ADDR, &mut buf);
@@ -50,6 +56,13 @@ fn load_or_create_seed(flash: &mut FlashStorage, rng: &mut Rng) -> [u8; 32] {
         let mut s = [0u8; 32];
         s.copy_from_slice(&buf[4..]);
         return s;
+    }
+    let mut nvs = alloc::vec![0u8; NVS_LEN];
+    if flash.read(NVS_ADDR, &mut nvs).is_ok() {
+        if let Some(s) = meshstar_core::platform::nvs::original_identity_seed(&nvs) {
+            println!("identity: reusing the original MeshStar firmware's Ed25519 key from NVS");
+            return s;
+        }
     }
     let mut s = [0u8; 32];
     rng.fill_bytes(&mut s);

@@ -104,10 +104,10 @@ the board ran Meshtastic before MeshStar. Harmless.
 
 | original feature | rebuild status |
 |---|---|
-| Ed25519 identity in NVS | same (seed in the last flash sector; switch to NVS keys `ed25519_pk/sk` for continuity) |
+| Ed25519 identity in NVS | **ported**: `meshstar_core::platform::nvs` parses the ESP-IDF NVS partition read-only and the examples reuse `meshstar/ed25519_sk` when present (verified against the dump: the reference node's key yields address `MS-077fd83b416603a7` in the rebuild's addressing) |
 | Noise XX sessions | same pattern, different cipher suite (interoperability with the original would need `AESGCM_BLAKE2b`) |
 | ANCHOR / GATEWAY / BRIDGE roles, compat vs bridge | same concepts (roles NORMAL/LEAF/ANCHOR + gateway modes Native/Compatibility/Bridge) |
-| Meshtastic LongFast + MeshCore 869.618 SF8/9 scan | profiles + `ScanSchedule` in the adapters (add an SF8/SF9 alternating schedule for MeshCore EU) |
+| Meshtastic LongFast + MeshCore 869.618 SF8/9 scan | **ported and improved**: `meshcore::profiles::eu_uk_sf8/sf9/eu_uk_scan`, and `Sx126x::sniff` sweeps profiles with CAD instead of dwelling 15 s per SF (which loses about half of the traffic) |
 | LBT, duty cycle | same |
 | OLED UI, BLE NUS companion protocol, battery ADC, button | **not ported yet** (examples only have a serial console) |
 | ADR (adaptive SF) | not implemented |

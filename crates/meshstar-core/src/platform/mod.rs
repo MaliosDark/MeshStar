@@ -3,6 +3,8 @@
 
 use alloc::vec::Vec;
 
+pub mod nvs;
+
 /// Monotonic millisecond clock.
 pub trait Clock {
     fn now_ms(&self) -> u64;
