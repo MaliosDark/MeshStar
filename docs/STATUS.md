@@ -64,9 +64,10 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
    cualquier nodo que conozca la clave de una LEAF pueda adjuntarla en un RREP de "sólo clave"
    sin ruta; caché de claves de LEAF distribuida en beacons completos de los hosts (32 B por
    LEAF, rotando); reintento del RREQ de clave con TTL pequeño hacia el host conocido.
-4. ~~Validar la interoperabilidad~~ **MeshCore hecho** (2026-09-16, companion v1.17.1 real,
-   ambos sentidos, ver docs/INTEROP.md). **Meshtastic pendiente** (sin dispositivo). Falta un
-   reloj/sincronización de hora para los timestamps foráneos.
+4. ~~Validar la interoperabilidad~~ **Hecho** (2026-09-16): MeshCore companion v1.17.1 y
+   Meshtastic 2.7.26 reales, ambos en los dos sentidos (ver docs/INTEROP.md). Falta un
+   reloj/sincronización de hora para los timestamps foráneos y responder `NodeInfo` en
+   modo Meshtastic (hoy el firmware compat sólo envía textos).
 5. Optimizaciones de protocolo pendientes de medir: m3 + primer DATA en un solo paquete;
    clave Ed25519 comprimida a 1 bit de signo en m2/m3 (-31 B); LINK_ACK sólo cuando no hay
    respuesta inmediata; beacons más cortos (direcciones truncadas en entradas de zona).

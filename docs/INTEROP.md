@@ -59,8 +59,25 @@ PC with the `meshcore` Python library):
   (`MeshStar-A: hola Chiripa, soy MeshStar #1`), and was re-flooded by the
   same repeater.
 
-Meshtastic is still verified from source only (no device at hand). The
-compat firmware has no real-time clock yet: foreign timestamps are
+**Validated on hardware (2026-09-16)** against the second Heltec V3 running
+the official Meshtastic firmware 2.7.26 (region `EU_868`, default `LongFast`
+channel, node `!f6fbf5a4`, driven from the PC with the `meshtastic` Python
+API):
+
+* the firmware's modem configuration for `LongFast`/`EU_868` matches the
+  adapter's `preset("LongFast", Eu868)` (869.525 MHz / 250 kHz / SF11 /
+  CR 4/5 / sync `0x2B`): the MeshStar board decoded the node's periodic
+  `NodeInfo` and a broadcast text (`hola desde Meshtastic-B #1`) with the
+  default PSK, detection score 100;
+* three `LongFast` texts encoded by the adapter (16-byte header, node number
+  `!416603a7` derived from the MeshStar address, AES-128-CTR with the
+  default key) were received and shown by the Meshtastic node with the full
+  text and the right sender, SNR ~6 dB at desk range;
+* the Meshtastic node then replied with a directed `NodeInfo` to
+  `!416603a7`, which the board decoded as well (it is not answered yet: the
+  compat firmware only sends texts, no `NodeInfo`/`Position`).
+
+The compat firmware has no real-time clock yet: foreign timestamps are
 synthesised from uptime (`1700000000 + uptime`), so MeshCore shows 2023
 dates for MeshStar messages until an RTC/time sync exists.
 

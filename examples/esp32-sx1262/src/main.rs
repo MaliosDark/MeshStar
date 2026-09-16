@@ -136,6 +136,7 @@ fn main() -> ! {
     let mut console = console::Console::new();
     let mut rx_buf = [0u8; 255];
     let mut uart_buf = [0u8; 64];
+    let mut cline: heapless::String<160> = heapless::String::new();
     let mut lbt_rng = rng_from_seed(rng_seed);
     let mut compat = compat::Compat::new(&seed, "MeshStar-A");
     let mut compat_last_periodic = 0u64;
@@ -221,50 +222,65 @@ fn main() -> ! {
                 }
             }
         }
-        // Console (compat commands are handled here, the rest by the shared console).
+        // Console: accumulate a line, then handle compat commands here and the rest
+        // through the shared console.
         if let Ok(n) = uart.read_buffered_bytes(&mut uart_buf) {
-            if n > 0 {
-                let text = core::str::from_utf8(&uart_buf[..n]).unwrap_or("").trim();
-                let mut handled = false;
-                if let Some(arg) = text.strip_prefix("compat ") {
-                    handled = true;
-                    let mode = match arg.trim() {
-                        "meshcore" => Some(meshstar_protocols::model::ProtocolId::MeshCore),
-                        "meshtastic" => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
-                        _ => None,
-                    };
-                    compat.mode = mode;
-                    let p = mode.map(compat::Compat::profile).unwrap_or(profile);
-                    match radio.configure(&p).and_then(|_| radio.start_receive()) {
-                        Ok(()) => println!("compat {:?}: radio {}", mode, p),
-                        Err(e) => println!("radio error {:?}", e),
-                    }
-                    compat_last_periodic = 0;
-                } else if let Some(msg) = text.strip_prefix("csend ") {
-                    handled = true;
-                    match compat.mode {
-                        Some(mode) => {
-                            let mut r = [0u8; 32];
-                            lbt_rng.fill_bytes(&mut r);
-                            match compat.encode_text(mode, msg.trim(), now, r) {
-                                Ok(f) => {
-                                    let res = radio.transmit(&f);
-                                    let _ = radio.start_receive();
-                                    println!("[compat {}] sent {} B: {:?}", mode, f.len(), res);
+            for &b in &uart_buf[..n] {
+                match b {
+                    b'\r' | b'\n' => {
+                        if !cline.is_empty() {
+                            let line = cline.clone();
+                            cline.clear();
+                            let text = line.trim();
+                            let mut handled = true;
+                            if let Some(arg) = text.strip_prefix("compat ") {
+                                let mode = match arg.trim() {
+                                    "meshcore" => Some(meshstar_protocols::model::ProtocolId::MeshCore),
+                                    "meshtastic" => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
+                                    _ => None,
+                                };
+                                compat.mode = mode;
+                                let p = mode.map(compat::Compat::profile).unwrap_or(profile);
+                                match radio.configure(&p).and_then(|_| radio.start_receive()) {
+                                    Ok(()) => println!("compat {:?}: radio {}", mode, p),
+                                    Err(e) => println!("radio error {:?}", e),
                                 }
-                                Err(e) => println!("encode error {}", e),
+                                compat_last_periodic = 0;
+                            } else if let Some(msg) = text.strip_prefix("csend ") {
+                                match compat.mode {
+                                    Some(mode) => {
+                                        let mut r = [0u8; 32];
+                                        lbt_rng.fill_bytes(&mut r);
+                                        match compat.encode_text(mode, msg.trim(), now, r) {
+                                            Ok(f) => {
+                                                let res = radio.transmit(&f);
+                                                let _ = radio.start_receive();
+                                                println!("[compat {}] sent {} B: {:?}", mode, f.len(), res);
+                                            }
+                                            Err(e) => println!("encode error {}", e),
+                                        }
+                                    }
+                                    None => println!("compat mode off"),
+                                }
+                            } else if text == "advert" {
+                                compat_last_periodic = 0;
+                            } else {
+                                handled = false;
+                            }
+                            if !handled {
+                                let stats = radio.stats();
+                                let mut out = Writer(&mut uart);
+                                console.feed(text.as_bytes(), &mut node, stats, &mut out);
+                                console.feed(b"\n", &mut node, stats, &mut out);
                             }
                         }
-                        None => println!("compat mode off"),
                     }
-                } else if text == "advert" {
-                    handled = true;
-                    compat_last_periodic = 0;
-                }
-                if !handled {
-                    let stats = radio.stats();
-                    let mut out = Writer(&mut uart);
-                    console.feed(&uart_buf[..n], &mut node, stats, &mut out);
+                    0x08 | 0x7f => {
+                        cline.pop();
+                    }
+                    _ => {
+                        let _ = cline.push(b as char);
+                    }
                 }
             }
         }
