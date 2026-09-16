@@ -1,5 +1,6 @@
 [package]
 name = "meshstar-radio-sx127x"
+description = "SX1276/SX1277/SX1278/SX1279 LoRa driver implementing meshstar_core::radio::Radio over embedded-hal 1.0"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

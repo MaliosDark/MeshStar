@@ -102,7 +102,9 @@ pub struct NodeOverrides {
 
 impl Default for NodeOverrides {
     fn default() -> Self {
-        Self { beacon_interval_ms: 120_000, zone_radius: 2, max_ttl: 64, default_ttl: 32, leaf_wake_interval_s: 120, leaf_awake_window_ms: 4_000, max_airtime_permille: 100 }
+        // 1 % duty cycle: EU 868 MHz g1 sub-band. Naive flooding cannot
+        // respect it in a large mesh; that is part of the comparison.
+        Self { beacon_interval_ms: 120_000, zone_radius: 2, max_ttl: 64, default_ttl: 32, leaf_wake_interval_s: 120, leaf_awake_window_ms: 4_000, max_airtime_permille: 10 }
     }
 }
 
@@ -251,6 +253,8 @@ impl World {
             nodes.push(SimNode { node, addr, role: p.role, x: p.x, y: p.y, online: true, tx_until: 0, receptions: Vec::new(), reach: Vec::new(), energy: NodeEnergy::default(), waypoint: None, offline_until: 0 });
         }
         let mut traffic = traffic::TrafficGen::new(scenario.traffic.clone(), scenario.warmup_s * 1000, scenario.duration_s * 1000);
+        traffic.positions = placement.iter().map(|p| (p.x, p.y)).collect();
+        traffic.local_radius_m = link.range_with_margin_m(LinkModel::GOOD_MARGIN_DB) * scenario.traffic.local_hops as f32;
         traffic.leaves = nodes.iter().enumerate().filter(|(_, n)| n.role == Role::Leaf).map(|(i, _)| i).collect();
         traffic.always_on = nodes.iter().enumerate().filter(|(_, n)| n.role != Role::Leaf).map(|(i, _)| i).collect();
         let mut w = Self { step_ms: scenario.step_ms.max(1), scenario, nodes, now: 0, link, metrics: Metrics::default(), traffic, index, rng, last_reach_update: 0, log: Vec::new(), keep_log: false, trace: Vec::new(), trace_ids: Vec::new() };

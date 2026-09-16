@@ -1,0 +1,26 @@
+100 nodes, 2 seed(s), 8 msg/min, 1800 s
+
+metric                                     zrp   flood-protected             flood
+----------------------------------------------------------------------------------
+nodes                                      100               100               100
+avg radio degree                           7.1               7.1               7.1
+messages sent                              191               190               194
+delivery ratio                          58.2 %            35.3 %            14.6 %
+ack ratio                               51.2 %            26.3 %             9.7 %
+stored at anchor                             0                 0                 0
+latency mean / p95 (ms)         43850 / 152650    97046 / 646605    33919 / 143665
+avg hops                                  1.58              1.70              2.80
+tx packets                                8584              8507             10366
+tx per delivery                           14.6              30.3              96.9
+relays / suppressed                2220 / 1151      5436 / 12540          8623 / 0
+duplicates rx                            21898             16326             12942
+retransmissions                            242               235               198
+control overhead                        79.9 %            76.1 %            73.5 %
+route requests                              80                 0                 0
+route convergence mean                78245 ms              0 ms              0 ms
+collisions                               50747             60702            128038
+channel utilisation                   131.92 %          137.63 %          165.18 %
+airtime per node                        23.7 s            24.8 s            29.7 s
+energy mean (mAh)                         5.09              5.12              5.26
+energy leaf / anchor               0.36 / 6.30       0.36 / 6.34       0.36 / 6.48
+

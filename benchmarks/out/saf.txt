@@ -1,0 +1,24 @@
+metric                                   value
+----------------------------------------------
+nodes                                       30
+avg radio degree                           5.4
+messages sent                               66
+delivery ratio                          13.6 %
+ack ratio                                4.5 %
+stored at anchor                             9
+latency mean / p95 (ms)        398121 / 937000
+avg hops                                  1.00
+tx packets                                1869
+tx per delivery                           22.7
+relays / suppressed                  309 / 286
+duplicates rx                             2100
+retransmissions                             52
+control overhead                        79.9 %
+route requests                              71
+route convergence mean                 8210 ms
+collisions                                6722
+channel utilisation                    26.58 %
+airtime per node                        21.3 s
+energy mean (mAh)                         5.09
+energy leaf / anchor               0.58 / 8.28
+

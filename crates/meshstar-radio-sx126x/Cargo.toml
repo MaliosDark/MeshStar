@@ -1,5 +1,6 @@
 [package]
 name = "meshstar-radio-sx126x"
+description = "SX1261/SX1262/SX1268 LoRa driver implementing meshstar_core::radio::Radio over embedded-hal 1.0"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +10,5 @@ authors.workspace = true
 [dependencies]
 meshstar-core = { path = "../meshstar-core", default-features = false }
 embedded-hal = { workspace = true }
+
+[dev-dependencies]
