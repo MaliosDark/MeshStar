@@ -493,6 +493,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshstar-companion"
+version = "0.1.0"
+
+[[package]]
 name = "meshstar-core"
 version = "0.1.0"
 dependencies = [

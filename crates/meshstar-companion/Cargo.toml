@@ -1,0 +1,10 @@
+[package]
+name = "meshstar-companion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MeshStar companion protocol: the binary frames a phone/PC app exchanges with a node over BLE or serial"
+
+[dependencies]
+
+[dev-dependencies]

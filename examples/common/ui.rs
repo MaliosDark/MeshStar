@@ -528,7 +528,10 @@ pub struct UiNode {
 
 #[derive(Clone, Debug)]
 pub struct UiMsg {
+    /// Node-local sequence number (1-based, from `UiModel::total_msgs`).
+    pub seq: u32,
     pub proto: Proto,
+    pub from_id: IdentityRef,
     pub from: Name,
     pub channel: Name,
     pub text: heapless::String<96>,
@@ -661,7 +664,7 @@ impl UiModel {
 
     /// A MeshStar message arrived.
     pub fn push_native(&mut self, from: Address, text: &str, protection: Protection, rssi: i16, hops: u8, now: u64) {
-        self.push_msg(UiMsg { proto: Proto::Star, from: Self::short_addr(&from), channel: Name::try_from("direct").unwrap_or_default(), text: text.chars().take(96).collect(), sec: Sec::from_protection(protection), rssi, hops, at: now, unread: true });
+        self.push_msg(UiMsg { seq: 0, proto: Proto::Star, from_id: IdentityRef::MeshStar(from), from: Self::short_addr(&from), channel: Name::try_from("direct").unwrap_or_default(), text: text.chars().take(96).collect(), sec: Sec::from_protection(protection), rssi, hops, at: now, unread: true });
     }
 
     /// A frame decoded by the compatibility layer.
@@ -707,17 +710,18 @@ impl UiModel {
         }
         if m.content_type == ContentType::Text {
             if let Some(t) = m.text_payload() {
-                self.push_msg(UiMsg { proto, from: name, channel: chan, text: t.chars().take(96).collect(), sec, rssi, hops: m.hops.hops_travelled.unwrap_or(0), at: now, unread: true });
+                self.push_msg(UiMsg { seq: 0, proto, from_id: m.source.clone(), from: name, channel: chan, text: t.chars().take(96).collect(), sec, rssi, hops: m.hops.hops_travelled.unwrap_or(0), at: now, unread: true });
             }
         }
     }
 
-    fn push_msg(&mut self, m: UiMsg) {
+    fn push_msg(&mut self, mut m: UiMsg) {
         if self.msgs.is_full() {
             self.msgs.pop();
         }
-        let _ = self.msgs.insert(0, m);
         self.total_msgs = self.total_msgs.wrapping_add(1);
+        m.seq = self.total_msgs;
+        let _ = self.msgs.insert(0, m);
     }
 
     /// Record the RSSI of each new frame for the sparkline.

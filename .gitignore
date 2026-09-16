@@ -4,3 +4,11 @@
 /benchmarks/out/*.tmp
 # raw dumps of the reference board contain its private key: never commit
 /firmware-dump/
+# Flutter app build products
+app/build/
+app/.dart_tool/
+app/.flutter-plugins*
+app/android/.gradle/
+app/android/local.properties
+app/android/app/.cxx/
+app/*.iml

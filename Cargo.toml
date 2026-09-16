@@ -7,6 +7,7 @@ members = [
     "crates/meshstar-radio-sx127x",
     "crates/meshstar-sim",
     "crates/meshstar-cli",
+    "crates/meshstar-companion",
 ]
 # ESP32 firmware examples need the Xtensa/RISC-V toolchain (espup) and are
 # built on their own: `cd examples/esp32-sx1262 && cargo build --release`.

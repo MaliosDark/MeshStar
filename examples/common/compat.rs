@@ -15,6 +15,8 @@ pub struct Compat {
     pub detector: Detector,
     pub ctx: ProtocolContext,
     pub seen: u32,
+    /// (unix seconds, uptime ms) when the app last set the time.
+    time_base: Option<(u32, u64)>,
     meshcore_id: meshstar_protocols::adapter::LocalProtocolIdentity,
     meshtastic_id: meshstar_protocols::adapter::LocalProtocolIdentity,
 }
@@ -30,7 +32,26 @@ impl Compat {
         let num = u32::from_be_bytes([addr.0[4], addr.0[5], addr.0[6], addr.0[7]]);
         let meshtastic_id = meshstar_protocols::adapter::LocalProtocolIdentity { protocol: ProtocolId::Meshtastic, id: IdentityRef::Meshtastic(num), display_name: String::from(name), short_name: name.chars().take(4).collect(), secret: Vec::new() };
         ctx.local = Some(meshcore_id.clone());
-        Self { mode: None, detector: Detector::with_all(None, None), ctx, seen: 0, meshcore_id, meshtastic_id }
+        Self { mode: None, detector: Detector::with_all(None, None), ctx, seen: 0, time_base: None, meshcore_id, meshtastic_id }
+    }
+
+    /// Change the display name used on the foreign networks.
+    pub fn set_name(&mut self, name: &str) {
+        self.meshcore_id.display_name = String::from(name);
+        self.meshtastic_id.display_name = String::from(name);
+        self.meshtastic_id.short_name = name.chars().take(4).collect();
+    }
+
+    /// Set the wall clock (from the companion app).
+    pub fn set_time(&mut self, unix_s: u32, now: u64) {
+        self.time_base = Some((unix_s, now));
+    }
+
+    fn unix_time(&self, now: u64) -> u32 {
+        match self.time_base {
+            Some((u, t0)) => u.wrapping_add((now.saturating_sub(t0) / 1000) as u32),
+            None => 1_700_000_000 + (now / 1000) as u32,
+        }
     }
 
     fn select_identity(&mut self, mode: ProtocolId) {
@@ -69,7 +90,7 @@ impl Compat {
     /// Encode a public-channel text for `mode`.
     pub fn encode_text(&mut self, mode: ProtocolId, text: &str, now: u64, random: [u8; 32]) -> Result<Vec<u8>, String> {
         self.ctx.now_ms = now;
-        self.ctx.unix_time_s = 1_700_000_000 + (now / 1000) as u32;
+        self.ctx.unix_time_s = self.unix_time(now);
         self.ctx.random = random;
         self.ctx.profile = Self::profile(mode);
         self.select_identity(mode);
@@ -86,7 +107,7 @@ impl Compat {
     /// Frames the adapter wants to send periodically (adverts / node info).
     pub fn periodic(&mut self, mode: ProtocolId, now: u64, random: [u8; 32]) -> Vec<Vec<u8>> {
         self.ctx.now_ms = now;
-        self.ctx.unix_time_s = 1_700_000_000 + (now / 1000) as u32;
+        self.ctx.unix_time_s = self.unix_time(now);
         self.ctx.random = random;
         self.ctx.profile = Self::profile(mode);
         self.select_identity(mode);

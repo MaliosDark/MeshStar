@@ -1,0 +1,26 @@
+name: meshstar
+description: MeshStar companion app — one mesh client for MeshStar, Meshtastic and MeshCore nodes over BLE.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_blue_plus: ^1.35.5
+  permission_handler: ^11.4.0
+  provider: ^6.1.2
+  shared_preferences: ^2.3.4
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/meshstar-logo.png

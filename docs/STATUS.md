@@ -77,6 +77,14 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
 7. Modelado de flooding gestionado de Meshtastic y repetidores MeshCore con más fidelidad en el
    simulador (hoy: flood genérico con tope de saltos).
 8. Persistencia de estado en el firmware (identidad ya se guarda; falta buzón/rutas).
+10. **App Android + protocolo companion** (hecho 2026-09-16): `crates/meshstar-companion`
+   (códec no_std, docs/COMPANION_PROTOCOL.md), BLE en el firmware ESP32-S3 (esp-wifi +
+   bleps, servicio `4d657368-…`), app Flutter en `app/` (Chats/Nodos/Redes/Dispositivo,
+   insignias de red y etiquetas de seguridad, envío en las tres redes, modo de radio,
+   renombrar). Validado con un Android 7 real: conexión, info, cambio a scan y texto
+   `#Public` MeshCore enviado desde el teléfono. Falta: iOS/macOS build, mapa, entrega
+   de mensajes MeshStar recibidos al hilo correcto cuando el remitente no tiene nombre,
+   notificaciones push, historial largo en el nodo, SET_ROLE.
 9. UI de dispositivo (hecha 2026-09-16, ver docs/UI.md): barra de estado invertida, listas
    unificadas con insignias de protocolo y etiqueta de seguridad, chats, redes, señal con
    sparkline, nodo, ajustes; falta: responder desde el dispositivo (app BLE), toggle de

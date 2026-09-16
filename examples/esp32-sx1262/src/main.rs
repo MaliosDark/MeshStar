@@ -10,6 +10,8 @@
 
 extern crate alloc;
 
+#[path = "../../common/companion.rs"]
+mod companion;
 #[path = "../../common/console.rs"]
 mod console;
 #[path = "../../common/ui.rs"]
@@ -30,6 +32,10 @@ use esp_hal::spi::Mode as SpiMode;
 use esp_hal::time::RateExtU32;
 use esp_hal::uart::Uart;
 use esp_hal::Blocking;
+use bleps::ad_structure::{create_advertising_data, AdStructure, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE};
+use bleps::attribute_server::{AttributeServer, NotificationData, WorkResult};
+use bleps::{gatt, Ble, HciConnector};
+use esp_wifi::ble::controller::BleConnector;
 use esp_println::println;
 use esp_storage::FlashStorage;
 use meshstar_core::identity::Identity;
@@ -42,6 +48,31 @@ use rand_core::RngCore;
 /// Where the 32 byte identity seed is stored (last 4 KiB sector of 8 MiB).
 const SEED_ADDR: u32 = 0x7F_F000;
 const SEED_MAGIC: &[u8; 4] = b"MSS1";
+
+/// Node name record (same sector as the seed, after it): "MSN1" | len | utf8.
+const NAME_ADDR: u32 = SEED_ADDR + 0x100;
+const NAME_MAGIC: &[u8; 4] = b"MSN1";
+
+fn load_name(flash: &mut FlashStorage) -> Option<alloc::string::String> {
+    let mut buf = [0u8; 36];
+    flash.read(NAME_ADDR, &mut buf).ok()?;
+    if &buf[..4] != NAME_MAGIC {
+        return None;
+    }
+    let n = (buf[4] as usize).min(31);
+    core::str::from_utf8(&buf[5..5 + n]).ok().map(alloc::string::String::from)
+}
+
+fn save_name(flash: &mut FlashStorage, name: &str) {
+    let mut buf = [0xFFu8; 36];
+    buf[..4].copy_from_slice(NAME_MAGIC);
+    let n = name.len().min(31);
+    buf[4] = n as u8;
+    buf[5..5 + n].copy_from_slice(&name.as_bytes()[..n]);
+    if let Err(e) = flash.write(NAME_ADDR, &buf) {
+        log::warn!("name save failed {:?}", e);
+    }
+}
 
 fn now_ms() -> u64 {
     esp_hal::time::now().duration_since_epoch().to_millis()
@@ -78,11 +109,15 @@ fn load_or_create_seed(flash: &mut FlashStorage, rng: &mut Rng) -> [u8; 32] {
 
 #[esp_hal::main]
 fn main() -> ! {
-    let peripherals = esp_hal::init(esp_hal::Config::default());
-    esp_alloc::heap_allocator!(160 * 1024);
+    let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()));
+    esp_alloc::heap_allocator!(200 * 1024);
     esp_println::logger::init_logger_from_env();
 
     let mut rng = Rng::new(peripherals.RNG);
+    // BLE controller (esp-wifi) for the companion app link.
+    let timg0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
+    let wifi_init = esp_wifi::init(timg0.timer0, rng, peripherals.RADIO_CLK).expect("esp-wifi init");
+    let mut bluetooth = peripherals.BT;
     let mut flash = FlashStorage::new();
     let seed = load_or_create_seed(&mut flash, &mut rng);
     let identity = Identity::from_seed(&seed);
@@ -111,7 +146,9 @@ fn main() -> ! {
     // Node.
     let mut cfg = NodeConfig::default();
     cfg.profile = profile;
-    cfg.name = alloc::string::String::from("heltec-v3");
+    // Name: saved by the app, else "MeshStar-XXXX" from the address.
+    let a = identity.address();
+    cfg.name = load_name(&mut flash).unwrap_or_else(|| alloc::format!("MeshStar-{:02X}{:02X}", a.0[6], a.0[7]));
     let mut node = Node::new(cfg, identity, rng_from_seed(rng_seed), now_ms());
     println!("MeshStar {} role {} profile {}", node.address(), node.role().name(), profile);
 
@@ -167,7 +204,7 @@ fn main() -> ! {
     let mut uart_buf = [0u8; 64];
     let mut cline: heapless::String<160> = heapless::String::new();
     let mut lbt_rng = rng_from_seed(rng_seed);
-    let mut compat = compat::Compat::new(&seed, "MeshStar-A");
+    let mut compat = compat::Compat::new(&seed, &node.config().name);
     let mut compat_last_periodic = 0u64;
 
     // Scan mode (`compat scan`): the radio stays on the MeshStar profile and
@@ -195,6 +232,52 @@ fn main() -> ! {
     let mut scan_hits = 0u32;
     let mut scan_frames = 0u32;
     let mut native_active_since = 0u64;
+
+    // Companion app link over BLE (see docs/COMPANION_PROTOCOL.md). The
+    // attribute server borrows the controller for its whole life, so every
+    // connection is a session: advertise, serve until the client disconnects,
+    // then start over.
+    let mut companion = companion::Companion::new(concat!("v", env!("CARGO_PKG_VERSION")));
+    let adv_name = alloc::format!("{}{}", meshstar_companion::ADV_NAME_PREFIX, &model.short_id[5..]);
+    let ble_rx: core::cell::RefCell<Vec<u8>> = core::cell::RefCell::new(Vec::new());
+    'ble: loop {
+        let connector = BleConnector::new(&wifi_init, &mut bluetooth);
+        let hci = HciConnector::new(connector, ble_now);
+        let mut ble = Ble::new(&hci);
+        if let Err(e) = ble.init() {
+            log::warn!("ble init {:?}", e);
+        }
+        let _ = ble.cmd_set_le_advertising_parameters();
+        match create_advertising_data(&[AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED), AdStructure::ServiceUuids128(&[bleps::att::Uuid::Uuid128(meshstar_companion::SERVICE_UUID_LE)]), AdStructure::CompleteLocalName(&adv_name)]) {
+            Ok(adv) => {
+                let _ = ble.cmd_set_le_advertising_data(adv);
+            }
+            Err(e) => log::warn!("adv data {:?}", e),
+        }
+        let _ = ble.cmd_set_le_advertise_enable(true);
+        println!("ble: advertising as {}", adv_name);
+        let mut wf = |_offset: usize, data: &[u8]| {
+            ble_rx.borrow_mut().extend_from_slice(data);
+        };
+        let mut rf = |_offset: usize, _data: &mut [u8]| 0usize;
+        gatt!([service {
+            uuid: "4d657368-5374-6172-4d53-000000000100",
+            characteristics: [
+                characteristic {
+                    uuid: "4d657368-5374-6172-4d53-000000000101",
+                    write: wf,
+                },
+                characteristic {
+                    name: "tx",
+                    uuid: "4d657368-5374-6172-4d53-000000000102",
+                    notify: true,
+                    read: rf,
+                },
+            ],
+        },]);
+        let mut ble_rng = bleps::no_rng::NoRng;
+        let mut srv = AttributeServer::new(&mut ble, &mut gatt_attributes, &mut ble_rng);
+        let mut tx_pending: Vec<u8> = Vec::new();
 
     loop {
         let now = now_ms();
@@ -362,20 +445,41 @@ fn main() -> ! {
         }
         // Events.
         while let Some(ev) = node.next_event() {
-            match ev {
+            match &ev {
                 NodeEvent::MessageReceived { from, payload, protection, hops, rssi_dbm, snr_db, .. } => {
                     let text = core::str::from_utf8(&payload).unwrap_or("<binary>");
                     println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB): {}", from, protection, hops, rssi_dbm, snr_db, text);
-                    model.push_native(from, text, protection, rssi_dbm, hops, now);
+                    model.push_native(*from, text, *protection, *rssi_dbm, *hops, now);
                     led_until = now + 400;
                 }
-                NodeEvent::Delivered { handle, to, rtt_ms } => println!("[ack] #{} to {} in {} ms", handle, to, rtt_ms),
-                NodeEvent::Stored { handle, anchor } => println!("[stored] #{} at {}", handle, anchor),
-                NodeEvent::Failed { handle, to, reason } => println!("[fail] #{} to {}: {:?}", handle, to, reason),
-                NodeEvent::NeighborUp(a) => println!("[nb+] {}", a),
-                NodeEvent::NeighborDown(a) => println!("[nb-] {}", a),
-                NodeEvent::SessionEstablished(a) => println!("[session] {}", a),
-                other => log::debug!("{:?}", other),
+                NodeEvent::Delivered { handle, to, rtt_ms } => {
+                    println!("[ack] #{} to {} in {} ms", handle, to, rtt_ms);
+                    companion.on_event(&ev);
+                }
+                NodeEvent::Stored { handle, anchor } => {
+                    println!("[stored] #{} at {}", handle, anchor);
+                    companion.on_event(&ev);
+                }
+                NodeEvent::Failed { handle, to, reason } => {
+                    println!("[fail] #{} to {}: {:?}", handle, to, reason);
+                    companion.on_event(&ev);
+                }
+                NodeEvent::NeighborUp(a) => {
+                    println!("[nb+] {}", a);
+                    companion.on_event(&ev);
+                }
+                NodeEvent::NeighborDown(a) => {
+                    println!("[nb-] {}", a);
+                    companion.on_event(&ev);
+                }
+                NodeEvent::SessionEstablished(a) => {
+                    println!("[session] {}", a);
+                    companion.on_event(&ev);
+                }
+                ref other => {
+                    log::debug!("{:?}", other);
+                    companion.on_event(&ev);
+                }
             }
         }
         // Compat periodic frames (adverts) every 10 minutes.
@@ -521,6 +625,12 @@ fn main() -> ! {
                             Err(e) => println!("radio error {:?}", e),
                         }
                         compat_last_periodic = 0;
+                        companion.mode_changed(match (compat.mode, scan) {
+                            (Some(meshstar_protocols::model::ProtocolId::MeshCore), _) => meshstar_companion::Mode::MeshCore,
+                            (Some(_), _) => meshstar_companion::Mode::Meshtastic,
+                            (None, true) => meshstar_companion::Mode::Scan,
+                            (None, false) => meshstar_companion::Mode::Native,
+                        });
                     }
                     ui::Action::Advert => compat_last_periodic = 0,
                     ui::Action::ScreenOff => {
@@ -577,6 +687,91 @@ fn main() -> ! {
             // Two pages (~6 ms) per iteration keeps the radio polled during redraws.
             let _ = oled.flush_pages(2);
         }
+        // Companion link: requests in, frames out (20 bytes per notification:
+        // the server truncates to the negotiated MTU and we cannot read it).
+        {
+            let rx: Vec<u8> = core::mem::take(&mut *ble_rx.borrow_mut());
+            if !rx.is_empty() {
+                let stats = radio.stats();
+                let (actions, sends) = companion.feed(&rx, &mut node, &model, &stats, model.battery_mv, (now - boot_ms) / 1000);
+                for a in actions {
+                    match a {
+                        companion::CompanionAction::None => {}
+                        companion::CompanionAction::SetMode(m) => {
+                            (compat.mode, scan) = match m {
+                                meshstar_companion::Mode::Native => (None, false),
+                                meshstar_companion::Mode::MeshCore => (Some(meshstar_protocols::model::ProtocolId::MeshCore), false),
+                                meshstar_companion::Mode::Meshtastic => (Some(meshstar_protocols::model::ProtocolId::Meshtastic), false),
+                                meshstar_companion::Mode::Scan => (None, true),
+                            };
+                            let p = compat.mode.map(compat::Compat::profile).unwrap_or(profile);
+                            match radio.configure(&p).and_then(|_| radio.start_receive()) {
+                                Ok(()) => println!("compat {:?} scan {}: radio {}", compat.mode, scan, p),
+                                Err(e) => println!("radio error {:?}", e),
+                            }
+                            compat_last_periodic = 0;
+                        }
+                        companion::CompanionAction::Announce => compat_last_periodic = 0,
+                        companion::CompanionAction::Reboot => esp_hal::reset::software_reset(),
+                        companion::CompanionAction::SetTime(unix) => compat.set_time(unix, now),
+                        companion::CompanionAction::SetName(name) => {
+                            model.name = name.chars().take(12).collect();
+                            compat.set_name(&name);
+                            save_name(&mut flash, &name);
+                            println!("name: {}", name);
+                        }
+                    }
+                }
+                for fs in sends {
+                    let fp = compat::Compat::profile(fs.proto);
+                    let mut r = [0u8; 32];
+                    lbt_rng.fill_bytes(&mut r);
+                    let ok = match compat.encode_text(fs.proto, &fs.text, now, r) {
+                        Ok(f) => {
+                            let current = compat.mode.map(compat::Compat::profile).unwrap_or(profile);
+                            let res = radio.configure(&fp).and_then(|_| radio.transmit(&f));
+                            let _ = radio.configure(&current).and_then(|_| radio.start_receive());
+                            println!("[companion] {} text on {}: {:?}", fs.proto, fp, res);
+                            res.is_ok()
+                        }
+                        Err(e) => {
+                            println!("[companion] encode error {}", e);
+                            false
+                        }
+                    };
+                    companion.foreign_sent(fs.handle, ok);
+                }
+            }
+            companion.push_new_messages(&model, now);
+            if tx_pending.is_empty() && companion.has_outgoing() {
+                tx_pending = companion.take_outgoing();
+            }
+            let mut notification = None;
+            let mut sent_len = 0;
+            if !tx_pending.is_empty() {
+                let mut cccd = [0u8; 1];
+                if srv.get_characteristic_value(tx_notify_enable_handle, 0, &mut cccd) == Some(1) && cccd[0] == 1 {
+                    sent_len = tx_pending.len().min(20);
+                    notification = Some(NotificationData::new(tx_handle, &tx_pending[..sent_len]));
+                } else {
+                    // No subscriber: nothing to deliver to.
+                    tx_pending.clear();
+                }
+            }
+            match srv.do_work_with_notification(notification) {
+                Ok(WorkResult::GotDisconnected) => {
+                    println!("ble: disconnected");
+                    tx_pending.clear();
+                    continue 'ble;
+                }
+                Ok(_) => {
+                    if sent_len > 0 {
+                        tx_pending.drain(..sent_len);
+                    }
+                }
+                Err(e) => log::debug!("ble {:?}", e),
+            }
+        }
         // Sleep until something is due (light sleep is left to the board integrator).
         let wake = node.next_wakeup();
         let now = now_ms();
@@ -584,6 +779,11 @@ fn main() -> ! {
             delay.delay_millis(5);
         }
     }
+    }
+}
+
+fn ble_now() -> u64 {
+    esp_hal::time::now().duration_since_epoch().to_millis()
 }
 
 struct Writer<'a, 'b>(&'a mut Uart<'b, Blocking>);
