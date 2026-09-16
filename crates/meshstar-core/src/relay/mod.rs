@@ -667,6 +667,7 @@ impl<R: RngCore, I: RelayIdentity> Relay<R, I> {
         best.map(|(_, nh)| nh)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn learn_route(&mut self, dst: Address, next_hop: Address, hops: u8, cost: u16, source: RouteSource, via_anchor: Option<Address>, now: u64) {
         if dst == self.address() || dst.is_broadcast() || next_hop == self.address() {
             return;
