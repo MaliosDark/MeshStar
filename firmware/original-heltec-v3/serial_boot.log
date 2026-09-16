@@ -1,0 +1,116 @@
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x9 (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce3810,len:0x178c
+load:0x403c9700,len:0x4
+load:0x403c9704,len:0xcc8
+load:0x403cc700,len:0x2e68
+entry 0x403c991c
+[0;32mI (27) boot: ESP-IDF 5.2.1 2nd stage bootloader[0m
+[0;32mI (27) boot: compile time Jun 11 2026 21:13:26[0m
+[0;32mI (27) boot: Multicore bootloader[0m
+[0;32mI (30) boot: chip revision: v0.2[0m
+[0;32mI (34) boot.esp32s3: Boot SPI Speed : 80MHz[0m
+[0;32mI (38) boot.esp32s3: SPI Mode       : DIO[0m
+[0;32mI (43) boot.esp32s3: SPI Flash Size : 8MB[0m
+[0;32mI (48) boot: Enabling RNG early entropy source...[0m
+[0;32mI (53) boot: Partition Table:[0m
+[0;32mI (57) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (64) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (72) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (79) boot:  2 factory          factory app      00 00 00010000 001f0000[0m
+[0;32mI (86) boot:  3 spiffs           Unknown data     01 82 00200000 00100000[0m
+[0;32mI (94) boot: End of partition table[0m
+[0;32mI (98) esp_image: segment 0: paddr=00010020 vaddr=3c080020 size=26a24h (158244) map[0m
+[0;32mI (135) esp_image: segment 1: paddr=00036a4c vaddr=3fc9b200 size=042d8h ( 17112) load[0m
+[0;32mI (139) esp_image: segment 2: paddr=0003ad2c vaddr=40374000 size=052ech ( 21228) load[0m
+[0;32mI (146) esp_image: segment 3: paddr=00040020 vaddr=42000020 size=736a8h (472744) map[0m
+[0;32mI (234) esp_image: segment 4: paddr=000b36d0 vaddr=403792ec size=11e3ch ( 73276) load[0m
+[0;32mI (251) esp_image: segment 5: paddr=000c5514 vaddr=600fe010 size=00004h (     4) load[0m
+[0;32mI (260) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (261) boot: Disabling RNG early entropy source...[0m
+[0;32mI (272) cpu_start: Multicore app[0m
+[0;32mI (282) cpu_start: Pro cpu start user code[0m
+[0;32mI (282) cpu_start: cpu freq: 160000000 Hz[0m
+[0;32mI (282) cpu_start: Application information:[0m
+[0;32mI (285) cpu_start: Project name:     MeshStar[0m
+[0;32mI (290) cpu_start: App version:      1[0m
+[0;32mI (294) cpu_start: Compile time:     Jun 11 2026 21:13:07[0m
+[0;32mI (300) cpu_start: ELF file SHA256:  ace3bd8c7...[0m
+[0;32mI (306) cpu_start: ESP-IDF:          5.2.1[0m
+[0;32mI (311) cpu_start: Min chip rev:     v0.0[0m
+[0;32mI (315) cpu_start: Max chip rev:     v0.99 [0m
+[0;32mI (320) cpu_start: Chip rev:         v0.2[0m
+[0;32mI (325) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (332) heap_init: At 3FCAB238 len 0003E4D8 (249 KiB): RAM[0m
+[0;32mI (338) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM[0m
+[0;32mI (344) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM[0m
+[0;32mI (350) heap_init: At 600FE014 len 00001FD4 (7 KiB): RTCRAM[0m
+[0;32mI (358) spi_flash: detected chip: gd[0m
+[0;32mI (361) spi_flash: flash io: dio[0m
+[0;33mW (365) i2c: This driver is an old driver, please migrate your application code to adapt `driver/i2c_master.h`[0m
+[0;32mI (376) sleep: Configure to isolate all GPIO pins in sleep state[0m
+[0;32mI (382) sleep: Enable automatic switching of GPIO sleep configuration[0m
+[0;32mI (390) coexist: coex firmware version: 77cd7f8[0m
+[0;32mI (395) coexist: coexist rom version e7ae62f[0m
+[0;32mI (400) main_task: Started on CPU0[0m
+[0;32mI (410) main_task: Calling app_main()[0m
+[0;32mI (410) meshstar: MeshStar v0.1.0-alpha booting (ESP32-S3)[0m
+[0;32mI (410) gpio: GPIO[35]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (420) meshstar: Battery ADC init (cali ok)[0m
+[0;32mI (450) meshstar: Loaded existing identity from NVM[0m
+[0;32mI (450) gpio: GPIO[12]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (460) gpio: GPIO[13]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (470) gpio: GPIO[14]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (480) meshstar: Radio HAL OK (SPI2 @10MHz, NSS=GPIO8, DIO1=GPIO14)[0m
+[0;32mI (480) meshstar: Region: EU868  freq=868.300 MHz  SF9  BW125kHz  +14dBm[0m
+[0;32mI (530) sx1262: TCXO 1800 mV init done, calibrated[0m
+[0;32mI (530) sx1262: DIO2 RF switch control enabled[0m
+[0;32mI (590) sx1262: Post-init status: ChipMode=2  DeviceErrors=0x0020 (ok)[0m
+[0;32mI (590) meshstar: SX1262 ready[0m
+[0;32mI (590) meshstar: Node ID: 0x6e614065  Role: 3[0m
+[0;32mI (590) BLE_INIT: BT controller compile version [30b57c4][0m
+[0;32mI (600) BLE_INIT: Bluetooth MAC: 44:1b:f6:fc:db:c2[0m
+[0;32mI (600) phy_init: phy_version 640,cd64a1a,Jan 24 2024,17:28:12[0m
+[0;32mI (650) meshstar: BLE init OK (NUS)[0m
+[0;32mI (660) gpio: GPIO[0]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (660) NimBLE: GAP procedure initiated: stop advertising.
+[0m
+[0;32mI (660) gpio: GPIO[36]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (660) NimBLE: Failed to restore IRKs from store; status=8
+[0m
+[0;32mI (680) NimBLE: GAP procedure initiated: advertise; [0m
+[0;32mI (680) NimBLE: disc_mode=2[0m
+[0;32mI (690) NimBLE:  adv_channel_map=0 own_addr_type=0 adv_filter_policy=0 adv_itvl_min=0 adv_itvl_max=0[0m
+[0;32mI (700) NimBLE: 
+[0m
+[0;32mI (700) meshstar: BLE advertising as "MeshStar"[0m
+[0;32mI (770) gpio: GPIO[21]| InputEn: 0| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (790) ssd1306: OLED ready (128x64, page-mode flush)[0m
+[0;32mI (790) ui_task: Config loaded from NVS[0m
+[0;32mI (820) ui_task: UI task started (10 Hz, GPIO0 button)[0m
+[0;32mI (820) meshstar: GATEWAY: compat mode 2 active[0m
+[0;32mI (820) meshstar: Battery: 44 mV  0%[0m
+[0;32mI (830) meshstar: Region changed to EU868 (868.300 MHz)[0m
+[0;32mI (830) meshstar: Radio reconfig: SF10 BW125kHz 14dBm[0m
+[0;32mI (850) meshstar: Compat: MeshCore UK/EU (SF9↔8 BW62.5 CR4/8 869.618 MHz scanning)[0m
+[0;32mI (860) sx1262: RX armed: 869618000 Hz  SF9  BW62500Hz  ChipMode=5 (ok)[0m
+[0;32mI (860) meshstar: Radio RX started[0m
+[0;32mI (860) meshstar: MeshStar running.[0m
+[0;32mI (860) main_task: Returned from app_main()[0m
+[0;32mI (880) sx1262: RX armed: 869618000 Hz  SF9  BW62500Hz  ChipMode=5 (ok)[0m
+[0;32mI (15800) sx1262: RX armed: 869618000 Hz  SF8  BW62500Hz  ChipMode=5 (ok)[0m
+[0;32mI (15800) meshstar: SF scan: listening on SF8 BW62.5 869.618 MHz[0m
+[0;32mI (30730) sx1262: RX armed: 869618000 Hz  SF9  BW62500Hz  ChipMode=5 (ok)[0m
+[0;32mI (30730) meshstar: SF scan: listening on SF9 BW62.5 869.618 MHz[0m
+[0;32mI (31370) sx1262: RX armed: 869618000 Hz  SF9  BW62500Hz  ChipMode=5 (ok)[0m
+[0;32mI (46250) sx1262: RxDone IRQ (irq=0x4f02)[0m
+[0;32mI (46250) sx1262: RxBufStatus: len=166 offset=0  RSSI=-83 SNR=-11[0m
+[0;32mI (46250) meshstar: RX 166 bytes  RSSI=-83 SNR=-11  hdr=0x01  [20 00 03 6e 61 40 65 ff][0m
+[0;32mI (46260) meshstar: RX raw[166]: 01 20 00 03  6e 61 40 65  ff ff ff ff  00 02 05 a5  → route=1 ptype=0[0m
+[0;32mI (46270) meshstar: MSG 0x00000000→0x000000ff (0 bytes)[0m
+[0;32mI (46280) sx1262: RX armed: 869618000 Hz  SF9  BW62500Hz  ChipMode=5 (ok)[0m
+[0;32mI (46330) sx1262: RX armed: 869618000 Hz  SF8  BW62500Hz  ChipMode=5 (ok)[0m
+[0;32mI (46330) meshstar: SF scan: listening on SF8 BW62.5 869.618 MHz[0m
