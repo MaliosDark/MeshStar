@@ -46,6 +46,7 @@ crates/meshstar-radio-*     SX126x and SX127x drivers over embedded-hal 1.0
 examples/esp32-*            firmware examples (esp-hal), built with espup
 docs/                       specifications, threat model, benchmarks, research notes
 tools/                      helper scripts (e.g. read-only firmware backup)
+firmware/original-heltec-v3 the original MeshStar v0.1.0-alpha firmware image (identity removed)
 ```
 
 ## Quick start

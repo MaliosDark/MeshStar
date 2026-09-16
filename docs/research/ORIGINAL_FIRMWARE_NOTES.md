@@ -1,7 +1,7 @@
 # Original MeshStar firmware (Heltec V3) — what the flash dump tells us
 
 Source: read-only dump of the reference Heltec board, 2026-09-16
-(`firmware-dump/full_flash.bin`, sha256 `4388eafa…3bbd`, 8 MiB), plus 60 s of
+(`firmware/original-heltec-v3/ (sanitised image; the raw dump with the private key is kept out of git)`, sha256 `4388eafa…3bbd`, 8 MiB), plus 60 s of
 boot log (`firmware-dump/serial_boot.log`). The binaries are kept out of git
 (they contain the node's private key); back them up elsewhere.
 
