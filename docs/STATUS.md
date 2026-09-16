@@ -45,9 +45,11 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
 
 ## 4. Pendiente, por prioridad
 
-1. **Volcado y análisis del firmware original** (`tools/dump_heltec.sh`, luego `strings`,
-   `esptool image_info`, documentar en `docs/research/ORIGINAL_FIRMWARE_NOTES.md`; añadir
-   `sudo usermod -aG dialout $USER` para que las sesiones futuras puedan hablar con la placa).
+1. ~~Volcado y análisis del firmware original~~ **Hecho** (2026-09-16): `firmware-dump/`
+   (fuera de git: contiene la clave privada) y `docs/research/ORIGINAL_FIRMWARE_NOTES.md`.
+   Pendiente de portar del original: UI OLED, protocolo BLE NUS de la app compañera, ADR,
+   claves NVS `ed25519_pk/sk`, escaneo SF8/SF9 de MeshCore EU, y decidir si se ofrece el
+   suite `Noise_XX_25519_AESGCM_BLAKE2b` para hablar con nodos del firmware original.
 2. **Compilar y flashear los ejemplos** en una placa que no sea la de referencia; ajustar a la
    versión de `esp-hal` instalada; validar los drivers en hardware real (sync word, CAD, RSSI).
 3. **Store-and-forward a escala** (benchmark F: 19,7 % entregado, 18 % confirmado tras el

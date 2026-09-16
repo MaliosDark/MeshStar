@@ -2,3 +2,8 @@
 **/target
 *.log
 /benchmarks/out/*.tmp
+# firmware dumps contain the reference node's private key
+/firmware-dump/*.bin
+/firmware-dump/*.sha256
+/firmware-dump/*.log
+/firmware-dump/*_strings.txt

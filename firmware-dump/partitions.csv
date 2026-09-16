@@ -1,0 +1,5 @@
+# name, type, subtype, offset, size
+nvs, 1, 2, 0x9000, 0x6000
+phy_init, 1, 1, 0xf000, 0x1000
+factory, 0, 0, 0x10000, 0x1f0000
+spiffs, 1, 130, 0x200000, 0x100000
