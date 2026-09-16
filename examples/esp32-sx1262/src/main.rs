@@ -715,7 +715,7 @@ fn main() -> ! {
                         companion::CompanionAction::Reboot => esp_hal::reset::software_reset(),
                         companion::CompanionAction::SetTime(unix) => compat.set_time(unix, now),
                         companion::CompanionAction::SetName(name) => {
-                            model.name = name.chars().take(12).collect();
+                            model.name = name.chars().take(16).collect();
                             compat.set_name(&name);
                             save_name(&mut flash, &name);
                             println!("name: {}", name);

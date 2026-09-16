@@ -511,7 +511,7 @@ impl Sec {
     }
 }
 
-pub type Name = heapless::String<12>;
+pub type Name = heapless::String<16>;
 
 #[derive(Clone, Debug)]
 pub struct UiNode {
@@ -582,7 +582,7 @@ impl UiModel {
         let _ = write!(short_id, "{:04X}.{:04X}", s >> 16, s & 0xFFFF);
         let mut nets = heapless::Vec::new();
         let _ = nets.push(UiNet { proto: Proto::Star, name: Name::try_from("MeshStar").unwrap_or_default(), nodes: 0, rssi: 0, frames: 0, last_seen: 0 });
-        Self { name: name.chars().take(12).collect(), short_id, role, nodes: heapless::Vec::new(), msgs: heapless::Vec::new(), nets, compat: None, scan: false, bridge: false, battery_mv: None, rssi_hist: [0; 56], hist_len: 0, last_rx_frames: 0, screen_on: true, last_activity: 0, screen_timeout_s: 0, total_msgs: 0 }
+        Self { name: name.chars().take(16).collect(), short_id, role, nodes: heapless::Vec::new(), msgs: heapless::Vec::new(), nets, compat: None, scan: false, bridge: false, battery_mv: None, rssi_hist: [0; 56], hist_len: 0, last_rx_frames: 0, screen_on: true, last_activity: 0, screen_timeout_s: 0, total_msgs: 0 }
     }
 
     pub fn unread(&self) -> usize {
@@ -670,7 +670,7 @@ impl UiModel {
     /// A frame decoded by the compatibility layer.
     pub fn observe_foreign(&mut self, m: &UnifiedMessage, rssi: i16, now: u64) {
         let proto = Proto::from_id(m.protocol);
-        let name: Name = m.meta("long_name").or(m.meta("name")).or(m.meta("sender_name")).map(|s| s.chars().take(12).collect()).unwrap_or_else(|| Self::short_ref(&m.source));
+        let name: Name = m.meta("long_name").or(m.meta("name")).or(m.meta("sender_name")).map(|s| s.chars().take(16).collect()).unwrap_or_else(|| Self::short_ref(&m.source));
         let sec = Sec::from_level(&m.security);
         if !m.source.is_broadcast() {
             if let Some(n) = self.nodes.iter_mut().find(|n| n.key == m.source) {
@@ -956,7 +956,8 @@ impl Ui {
     fn header<I: I2c>(&self, d: &mut Ssd1306<I>, m: &UiModel) {
         d.fill_rect(0, 0, WIDTH as i32, 11, true);
         d.icon8(1, 2, &ICON_STAR, false);
-        let mut x = d.text_on(10, 2, &m.name, false) + 4;
+        let hdr: heapless::String<10> = m.name.chars().take(10).collect();
+        let mut x = d.text_on(10, 2, &hdr, false) + 4;
         let role = match m.role {
             Role::Anchor => "A",
             Role::Leaf => "L",
