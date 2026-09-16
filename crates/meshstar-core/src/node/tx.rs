@@ -235,6 +235,7 @@ impl Node {
             p.header.next_hop = nh.short();
             self.routes.touch(&dst, &nh, now);
             let pr = if p.header.ptype == PacketType::Data { prio::DATA } else { prio::CONTROL };
+            self.track_hop(&p, nh, now, false);
             self.enqueue_packet(p, now, pr, false);
             return Ok(());
         }
@@ -255,22 +256,37 @@ impl Node {
         Ok(())
     }
 
-    /// Next hop: direct neighbour, zone table, then route cache.
+    /// Next hop: the cheapest of the direct link, the zone table and the
+    /// route cache. A marginal direct link loses against a solid two-hop path.
     pub(crate) fn next_hop_for(&self, dst: &Address, now: u64) -> Option<Address> {
+        let mut best: Option<(u32, Address)> = None;
+        let mut consider = |cost: u32, nh: Address| {
+            if best.map(|(c, _)| cost < c).unwrap_or(true) {
+                best = Some((cost, nh));
+            }
+        };
         if let Some(n) = self.neighbors.get(dst) {
             if !n.is_sleeping(now) || self.cfg.role == Role::Anchor {
-                return Some(*dst);
+                consider(link_cost(n.link_quality(), 0) as u32, *dst);
             }
         }
         if let Some(z) = self.zone.get(dst) {
-            if self.neighbors.contains(&z.next_hop) {
-                return Some(z.next_hop);
+            if let Some(nh) = self.neighbors.get(&z.next_hop) {
+                let per_hop = link_cost(z.quality.min(nh.link_quality()), 0) as u32;
+                consider(per_hop * z.distance as u32, z.next_hop);
             }
         }
         if let Some(r) = self.routes.lookup(dst, now) {
-            if self.neighbors.contains(&r.next_hop) || r.hops <= 1 {
-                return Some(r.next_hop);
+            if let Some(nh) = self.neighbors.get(&r.next_hop) {
+                // route cost already includes all links; refresh the first hop
+                let first = link_cost(nh.link_quality(), 0) as u32;
+                consider(r.effective_cost(now).max(first), r.next_hop);
+            } else if r.hops <= 1 {
+                consider(r.effective_cost(now), r.next_hop);
             }
+        }
+        if let Some((_, nh)) = best {
+            return Some(nh);
         }
         // A LEAF never runs route discovery: its ANCHOR (or best relaying
         // neighbour) routes on its behalf.
@@ -322,7 +338,7 @@ impl Node {
         let net_auth = self.cfg.network_key.is_some();
         let budget = max_payload(net_auth);
         if self.cfg.role != Role::Leaf {
-            let mut entries = self.zone.advertisement(self.cfg.zrp.max_advertised_entries);
+            let mut entries = self.zone.advertisement(self.cfg.zrp.max_advertised_entries, self.beacons_sent);
             b.zone = entries.clone();
             while b.encoded_len() > budget && !entries.is_empty() {
                 entries.pop();
@@ -346,20 +362,34 @@ impl Node {
         if self.pending_envelopes.iter().any(|p| p.dst == target) || !self.key_dir.contains_key(&target) {
             rflags |= rreq_flags::WANT_KEY;
         }
-        let q = RouteRequest { target, cost: 0, flags: rflags };
+        // Piggyback Noise message 1 when we are about to open a session
+        // with the target: the reply can carry message 2 back.
+        let handshake = self.handshakes.get(&target).filter(|h| h.hs.role() == crate::crypto::NoiseRole::Initiator).map(|h| h.m1.clone()).unwrap_or_default();
+        let q = RouteRequest { target, cost: 0, flags: rflags, handshake };
         self.counters.rreq_sent += 1;
         self.enqueue_packet(Packet::new(h, q.encode()), now, prio::BEACON, false);
     }
 
     pub(crate) fn send_route_reply(&mut self, origin: Address, reply: RouteReply, now: u64) {
+        // Reverse route must exist (learned from the request); otherwise drop.
+        if self.next_hop_for(&origin, now).is_none() && self.cfg.routing_mode != RoutingMode::Flood {
+            return;
+        }
+        if !self.ierp.mark_replied(origin, reply.req_id) {
+            return;
+        }
         let ttl = self.ttl_for(&origin);
         let h = self.base_header(PacketType::RouteReply, origin, ttl);
-        self.counters.rrep_sent += 1;
-        let p = Packet::new(h, reply.encode());
-        // Reverse route must exist (learned from the request); otherwise flood-free drop.
-        if self.next_hop_for(&origin, now).is_some() || self.cfg.routing_mode == RoutingMode::Flood {
-            let _ = self.route_unicast(p, now);
-        }
+        // Stagger: let the request flood pass first (its relays are jittered
+        // up to `storm.max_delay_ms`), then the cheapest reply goes first
+        // (1 ms per cost unit: a perfect link is 100 ms, a marginal one
+        // several hundred), plus random jitter to separate equals. Replies
+        // are spread over more than one airtime so that overhearing a
+        // better or equal reply can cancel ours instead of colliding.
+        let jitter = self.cfg.storm.max_delay_ms as u64 + 50 + (reply.cost as u64).min(1_500) + self.rng.next_u64() % 400;
+        let cost = reply.cost;
+        let req_id = reply.req_id;
+        self.rrep_pending.schedule(origin, req_id, cost, now + jitter, Packet::new(h, reply.encode()));
     }
 
     pub(crate) fn send_route_error(&mut self, to: Address, unreachable: Address, now: u64) {
@@ -651,6 +681,49 @@ impl Node {
                 let _ = self.send_session_packet(o.dst, PacketType::Data, &o.body, o.seq, true, now);
             }
         }
+    }
+
+    /// Remember a unicast transmission until the next hop confirms it.
+    pub(crate) fn track_hop(&mut self, p: &Packet, next_hop: Address, now: u64, is_relay: bool) {
+        if self.cfg.hop_retries == 0 || self.hop_pending.len() >= 24 {
+            return;
+        }
+        let key = p.header.key();
+        self.hop_pending.retain(|h| h.key != key);
+        if let Some(n) = self.neighbors.get_mut(&next_hop) {
+            n.record_tx_attempt();
+        }
+        let due = now + self.hop_timeout(p.wire_len()) + self.rng.next_u64() % 200;
+        self.hop_pending.push(super::HopPending { key, next_hop, packet: p.clone(), attempts: 1, due, is_relay, rerouted: false });
+    }
+
+    /// Time to wait for a hop confirmation: our airtime, the relay's
+    /// forwarding jitter and its own airtime, plus a fixed margin.
+    pub(crate) fn hop_timeout(&self, wire_len: usize) -> u64 {
+        2 * self.cfg.profile.airtime_ms(wire_len) as u64 + self.cfg.unicast_forward_jitter_ms as u64 + self.cfg.hop_ack_timeout_ms as u64
+    }
+
+    /// The next hop confirmed reception of `key` (relayed it, or LINK_ACKed).
+    pub(crate) fn hop_confirmed(&mut self, key: &crate::packet::PacketKey, from: Address) {
+        let before = self.hop_pending.len();
+        self.hop_pending.retain(|h| !(h.key == *key && h.next_hop == from));
+        if before != self.hop_pending.len() {
+            self.neighbors.record_success(&from);
+            if let Some(n) = self.neighbors.get_mut(&from) {
+                n.record_tx_confirmed();
+            }
+        }
+    }
+
+    /// Plaintext, single hop, unauthenticated: only suppresses a retransmission.
+    pub(crate) fn send_link_ack(&mut self, to: Address, packet_id: u32, now: u64) {
+        let mut h = self.base_header(PacketType::Control, to, 1);
+        h.next_hop = to.short();
+        let mut body = Vec::with_capacity(5);
+        body.push(crate::protocol::control::LINK_ACK);
+        body.extend_from_slice(&packet_id.to_be_bytes());
+        self.counters.link_acks_sent += 1;
+        self.enqueue_packet(Packet::new(h, body), now, prio::CONTROL, false);
     }
 
     /// Learn / refresh a route from observed traffic.

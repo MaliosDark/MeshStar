@@ -17,7 +17,7 @@ pub const MAX_TTL: u8 = 255;
 pub const DEFAULT_TTL: u8 = 32;
 
 /// Default TTL for route discovery. Grows with expanding ring search.
-pub const DISCOVERY_TTL_STEPS: [u8; 4] = [4, 12, 32, 96];
+pub const DISCOVERY_TTL_STEPS: [u8; 3] = [4, 12, 32];
 
 /// Size of a MeshStar address in bytes (open addressing, derived from the
 /// Ed25519 public key, see [`crate::identity`]).
@@ -169,6 +169,14 @@ pub mod control {
     pub const PONG: u8 = 6;
     /// Destination tells its ANCHOR that an envelope was read (mailbox GC).
     pub const MAILBOX_ACK: u8 = 7;
+    /// Link-layer acknowledgement of one hop: `packet_id u32` of the acked
+    /// packet. Plaintext, TTL 1, addressed to the previous hop. It only
+    /// suppresses a retransmission, so it needs no authentication.
+    pub const LINK_ACK: u8 = 8;
+    /// Plaintext notice: "I have no session with you" (our handshake
+    /// message 3 was lost). The initiator resends message 3. Unauthenticated,
+    /// so it is rate limited and only ever causes one retransmission.
+    pub const NO_SESSION: u8 = 9;
 }
 
 /// Errors produced by the protocol stack.

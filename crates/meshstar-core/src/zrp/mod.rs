@@ -42,8 +42,10 @@ pub struct ZrpConfig {
     pub zone_radius: u8,
     /// Attempts per destination before giving up (one per TTL ring).
     pub discovery_attempts: u8,
-    /// Base wait for a reply; scaled by the ring TTL.
+    /// Base wait for a reply, plus `discovery_per_hop_ms` per TTL hop of the
+    /// ring (request flood jitter + reply hop time, both directions).
     pub discovery_timeout_ms: u64,
+    pub discovery_per_hop_ms: u64,
     pub max_pending_discoveries: usize,
     /// Packets queued per pending discovery.
     pub max_queued_per_discovery: usize,
@@ -63,11 +65,12 @@ impl Default for ZrpConfig {
         Self {
             zone_radius: 2,
             discovery_attempts: DISCOVERY_TTL_STEPS.len() as u8,
-            discovery_timeout_ms: 2_500,
+            discovery_timeout_ms: 3_000,
+            discovery_per_hop_ms: 1_600,
             max_pending_discoveries: 8,
             max_queued_per_discovery: 4,
             max_zone_entries: 96,
-            max_advertised_entries: 12,
+            max_advertised_entries: 6,
             better_cost_percent: 70,
             discovery_holdoff_ms: 20_000,
         }
@@ -93,12 +96,65 @@ impl Discovery {
     }
 }
 
+/// ROUTE_REPLY transmissions waiting for their jitter slot. Several nodes
+/// usually know the target of a request; replying simultaneously would
+/// guarantee a collision, so replies are staggered (closest to the target
+/// first) and a node cancels its own reply when it overhears one that is at
+/// least as good for the same request.
+#[derive(Debug, Default)]
+pub struct PendingReplies {
+    items: Vec<(Address, u32, u16, u64, Packet)>,
+    pub suppressed: u32,
+}
+
+impl PendingReplies {
+    pub fn schedule(&mut self, origin: Address, req_id: u32, cost: u16, due: u64, p: Packet) {
+        if self.items.len() < 16 {
+            self.items.push((origin, req_id, cost, due, p));
+        }
+    }
+
+    /// Another reply for `(origin, req_id)` with `cost` was overheard.
+    pub fn heard(&mut self, origin: Address, req_id: u32, cost: u16) {
+        let before = self.items.len();
+        self.items.retain(|(o, r, c, _, _)| !(*o == origin && *r == req_id && *c >= cost));
+        self.suppressed += (before - self.items.len()) as u32;
+    }
+
+    pub fn due(&mut self, now: u64) -> Vec<Packet> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.items.len() {
+            if self.items[i].3 <= now {
+                out.push(self.items.remove(i).4);
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    pub fn next_due(&self) -> Option<u64> {
+        self.items.iter().map(|x| x.3).min()
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
 /// Seen ROUTE_REQUEST bookkeeping for a relay.
 #[derive(Clone, Copy, Debug)]
 pub struct SeenRequest {
     pub best_cost: u16,
     pub relays: u8,
     pub first_seen: u64,
+    /// We already answered this request.
+    pub replied: bool,
 }
 
 /// Reactive state of the ZRP layer (pending discoveries + request cache).
@@ -166,8 +222,9 @@ impl Ierp {
     }
 
     fn timeout_for(&self, ttl: u8) -> u64 {
-        // Reply must traverse up to 2*ttl links with forwarding delays.
-        self.cfg.discovery_timeout_ms + ttl as u64 * 400
+        // The request needs up to `ttl` jittered relays and the reply as
+        // many unicast hops (with hop retransmissions) to come back.
+        self.cfg.discovery_timeout_ms + ttl as u64 * self.cfg.discovery_per_hop_ms
     }
 
     /// Queue a packet until the route is known. False if full.
@@ -211,7 +268,7 @@ impl Ierp {
             } else {
                 d.req_id = new_req_id();
                 let ttl = d.ttl();
-                d.deadline = now + self.cfg.discovery_timeout_ms + ttl as u64 * 400;
+                d.deadline = now + self.cfg.discovery_timeout_ms + ttl as u64 * self.cfg.discovery_per_hop_ms;
                 retries.push((*t, d.req_id, ttl));
             }
         }
@@ -240,7 +297,7 @@ impl Ierp {
         }
         match self.seen_requests.get_mut(&key) {
             None => {
-                self.seen_requests.insert(key, SeenRequest { best_cost: cost, relays: 1, first_seen: now });
+                self.seen_requests.insert(key, SeenRequest { best_cost: cost, relays: 1, first_seen: now, replied: false });
                 true
             }
             Some(s) => {
@@ -256,6 +313,18 @@ impl Ierp {
                     false
                 }
             }
+        }
+    }
+
+    /// Mark a request as answered. Returns false if it already was.
+    pub fn mark_replied(&mut self, origin: Address, req_id: u32) -> bool {
+        match self.seen_requests.get_mut(&(origin, req_id)) {
+            Some(s) if s.replied => false,
+            Some(s) => {
+                s.replied = true;
+                true
+            }
+            None => true,
         }
     }
 
@@ -287,7 +356,7 @@ mod tests {
 
     #[test]
     fn expanding_ring_and_failure() {
-        let cfg = ZrpConfig { discovery_attempts: 3, discovery_timeout_ms: 100, ..Default::default() };
+        let cfg = ZrpConfig { discovery_attempts: 3, discovery_timeout_ms: 100, discovery_per_hop_ms: 10, ..Default::default() };
         let mut i = Ierp::new(cfg);
         assert!(i.may_start(&a(9), 0));
         assert_eq!(i.start(a(9), 1, 0), DISCOVERY_TTL_STEPS[0]);

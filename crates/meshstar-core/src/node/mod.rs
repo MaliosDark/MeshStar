@@ -38,7 +38,7 @@ use crate::routing::{RouteCache, RoutingConfig};
 use crate::store_forward::{Mailbox, MailboxConfig};
 use crate::storm::{RebroadcastScheduler, SeenCache, StormConfig};
 use crate::transport::{Transport, TransportConfig};
-use crate::zrp::{Ierp, ZoneTable, ZrpConfig};
+use crate::zrp::{Ierp, PendingReplies, ZoneTable, ZrpConfig};
 
 /// Which forwarding strategy the node runs. `Flood` exists for benchmarks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -77,6 +77,12 @@ pub struct NodeConfig {
     pub envelope_ttl_s: u32,
     /// Unicast forwarding jitter, ms.
     pub unicast_forward_jitter_ms: u32,
+    /// Hop-by-hop reliability: fixed margin added to twice the frame airtime
+    /// when waiting for the next hop to relay the packet (implicit ack) or to
+    /// send a LINK_ACK before retransmitting.
+    pub hop_ack_timeout_ms: u32,
+    /// Retransmissions per hop before giving up (end-to-end retries take over).
+    pub hop_retries: u8,
 }
 
 impl Default for NodeConfig {
@@ -98,10 +104,12 @@ impl Default for NodeConfig {
             power: PowerConfig::default(),
             session: SessionLimits::default(),
             reassembly: ReassemblyConfig::default(),
-            handshake_timeout_ms: 30_000,
+            handshake_timeout_ms: 60_000,
             max_tx_queue: 32,
             envelope_ttl_s: 24 * 3600,
             unicast_forward_jitter_ms: 60,
+            hop_ack_timeout_ms: 400,
+            hop_retries: 2,
         }
     }
 }
@@ -193,6 +201,12 @@ pub(crate) struct PendingHandshake {
     pub queued: Vec<QueuedSend>,
     /// Number of times message 1 was (re)sent.
     pub attempts: u8,
+    /// Message 1 bytes (initiator) for retransmission.
+    pub m1: Vec<u8>,
+    /// Responder: the initiator's ephemeral key and our message 2, so a
+    /// retransmitted message 1 gets the same answer instead of a restart.
+    pub re: [u8; 32],
+    pub m2: Vec<u8>,
 }
 
 impl core::fmt::Debug for PendingHandshake {
@@ -220,6 +234,7 @@ pub struct Node {
     pub(crate) zone: ZoneTable,
     pub(crate) routes: RouteCache,
     pub(crate) ierp: Ierp,
+    pub(crate) rrep_pending: PendingReplies,
     pub(crate) seen: SeenCache,
     pub(crate) sched: RebroadcastScheduler,
     pub(crate) transport: Transport,
@@ -249,8 +264,24 @@ pub struct Node {
     /// Last time the node woke up (LEAF: neighbours are not expired for
     /// time spent asleep).
     pub(crate) last_wake: u64,
+    pub(crate) slept_at: u64,
     /// ANCHOR: packets held for a sleeping LEAF neighbour, (leaf, packet, expires).
     pub(crate) held_for_sleeping: Vec<(Address, Packet, u64)>,
+    /// Unicast packets awaiting a hop acknowledgement.
+    pub(crate) hop_pending: Vec<HopPending>,
+}
+
+/// A transmitted unicast packet waiting for its next hop to confirm.
+#[derive(Clone, Debug)]
+pub(crate) struct HopPending {
+    pub key: crate::packet::PacketKey,
+    pub next_hop: Address,
+    pub packet: Packet,
+    pub attempts: u8,
+    pub due: u64,
+    pub is_relay: bool,
+    /// Already re-routed once after a hop failure (no second chance).
+    pub rerouted: bool,
 }
 
 impl core::fmt::Debug for Node {
@@ -267,11 +298,13 @@ impl Node {
         cfg.max_ttl = cfg.max_ttl.max(1);
         cfg.default_ttl = cfg.default_ttl.clamp(1, cfg.max_ttl);
         let jitter = rng.next_u64() % (cfg.neighbor.beacon_jitter_ms.max(1));
+        cfg.neighbor.snr_floor_db = cfg.profile.demod_snr_db();
         Self {
             neighbors: NeighborTable::new(cfg.neighbor),
             zone: ZoneTable::new(cfg.zrp.zone_radius, cfg.zrp.max_zone_entries, cfg.neighbor.beacon_interval_ms * cfg.neighbor.timeout_intervals as u64 * 2),
             routes: RouteCache::new(cfg.routing),
             ierp: Ierp::new(cfg.zrp),
+            rrep_pending: PendingReplies::default(),
             seen: SeenCache::new(cfg.storm.seen_cache_size, cfg.storm.seen_ttl_ms),
             sched: RebroadcastScheduler::new(),
             transport: Transport::new(cfg.transport, first_seq),
@@ -296,7 +329,9 @@ impl Node {
             rx_airtime_ms: 0,
             last_housekeeping: now,
             last_wake: now,
+            slept_at: now,
             held_for_sleeping: Vec::new(),
+            hop_pending: Vec::new(),
             cfg,
             id,
             rng,
@@ -422,6 +457,12 @@ impl Node {
         if let Some(d) = self.ierp.next_deadline() {
             t = t.min(d);
         }
+        if let Some(d) = self.rrep_pending.next_due() {
+            t = t.min(d);
+        }
+        if let Some(d) = self.hop_pending.iter().map(|h| h.due).min() {
+            t = t.min(d);
+        }
         if let Some(d) = self.transport.next_deadline() {
             t = t.min(d);
         }
@@ -471,11 +512,14 @@ impl Node {
 
         match self.power.tick(now) {
             Some(true) => {
+                let slept = now.saturating_sub(self.slept_at);
                 self.last_wake = now;
+                self.shift_timers(slept);
                 self.emit(NodeEvent::PowerState { awake: true });
                 self.on_wake(now);
             }
             Some(false) => {
+                self.slept_at = now;
                 self.emit(NodeEvent::PowerState { awake: false });
                 self.tx_queue.retain(|i| i.priority == 0);
             }
@@ -495,6 +539,61 @@ impl Node {
             self.seen.mark_forwarded(&key);
             p.header.relay = self.address().short();
             self.enqueue_packet(p, now, tx::prio::RELAY, true);
+        }
+
+        // Hop-by-hop retransmissions.
+        let max_retries = self.cfg.hop_retries;
+        let mut i = 0;
+        while i < self.hop_pending.len() {
+            if self.hop_pending[i].due > now {
+                i += 1;
+                continue;
+            }
+            if self.hop_pending[i].attempts > max_retries {
+                let h = self.hop_pending.remove(i);
+                self.counters.hop_failures += 1;
+                if self.neighbors.record_failure(&h.next_hop) {
+                    // link looks dead: drop routes through it
+                    for dst in self.routes.invalidate_via(&h.next_hop) {
+                        self.emit(NodeEvent::RouteLost(dst));
+                    }
+                } else {
+                    self.routes.mark_failure(&h.packet.header.dst, &h.next_hop);
+                }
+                // Try once through a different neighbour before giving up.
+                if !h.rerouted {
+                    if let Some(alt) = self.next_hop_for(&h.packet.header.dst, now).filter(|a| *a != h.next_hop) {
+                        let mut p = h.packet.clone();
+                        p.header.next_hop = alt.short();
+                        self.counters.hop_reroutes += 1;
+                        self.track_hop(&p, alt, now, h.is_relay);
+                        if let Some(np) = self.hop_pending.iter_mut().find(|x| x.key == p.header.key()) {
+                            np.rerouted = true;
+                        }
+                        self.enqueue_packet(p, now, tx::prio::DATA, h.is_relay);
+                    }
+                }
+                continue;
+            }
+            self.hop_pending[i].attempts += 1;
+            let nh = self.hop_pending[i].next_hop;
+            if let Some(n) = self.neighbors.get_mut(&nh) {
+                n.record_tx_attempt();
+            }
+            let jitter = self.rng.next_u64() % 300;
+            let timeout = self.hop_timeout(self.hop_pending[i].packet.wire_len());
+            self.hop_pending[i].due = now + timeout + jitter;
+            let p = self.hop_pending[i].packet.clone();
+            let is_relay = self.hop_pending[i].is_relay;
+            self.counters.hop_retransmissions += 1;
+            self.enqueue_packet(p, now + jitter, tx::prio::DATA, is_relay);
+            i += 1;
+        }
+
+        // Staggered route replies.
+        for p in self.rrep_pending.due(now) {
+            self.counters.rrep_sent += 1;
+            let _ = self.route_unicast(p, now);
         }
 
         // Discovery timers.
@@ -523,9 +622,25 @@ impl Node {
             self.emit(NodeEvent::Failed { handle: o.handle, to: o.dst, reason: FailReason::NoAck });
         }
 
-        // Handshake timeouts.
+        // Handshake retransmission (initiator resends message 1 up to 3 times
+        // over the timeout window) and timeouts.
         let timeout = self.cfg.handshake_timeout_ms;
-        let expired: Vec<Address> = self.handshakes.iter().filter(|(_, h)| now.saturating_sub(h.started_at) > timeout).map(|(a, _)| *a).collect();
+        let resend: Vec<(Address, Vec<u8>)> = self
+            .handshakes
+            .iter()
+            .filter(|(a, h)| !h.m1.is_empty() && h.attempts < 3 && !self.ierp.is_pending(a) && now.saturating_sub(h.started_at) > timeout / 3 * h.attempts as u64)
+            .map(|(a, h)| (*a, h.m1.clone()))
+            .collect();
+        for (a, m1) in resend {
+            if let Some(h) = self.handshakes.get_mut(&a) {
+                h.attempts += 1;
+            }
+            self.send_handshake_packet(a, crate::crypto::HandshakeMessage::One, m1, now);
+        }
+        // A handshake with a LEAF spans its sleep cycle: keep the state
+        // until it has had a chance to wake up twice.
+        let leaf_timeout = |n: Option<&crate::neighbor::Neighbor>| n.filter(|n| n.is_leaf() && n.sleep_interval_s > 0).map(|n| n.sleep_interval_s as u64 * 1000 * 2 + timeout).unwrap_or(timeout);
+        let expired: Vec<Address> = self.handshakes.iter().filter(|(a, h)| now.saturating_sub(h.started_at) > leaf_timeout(self.neighbors.get(a))).map(|(a, _)| *a).collect();
         for a in expired {
             if let Some(h) = self.handshakes.remove(&a) {
                 for q in h.queued {
@@ -605,6 +720,24 @@ impl Node {
             self.attached_anchor = None;
         }
         let _ = now;
+    }
+
+    /// Time spent asleep does not count against protocol timers.
+    fn shift_timers(&mut self, slept: u64) {
+        if slept == 0 {
+            return;
+        }
+        for h in self.handshakes.values_mut() {
+            h.started_at = h.started_at.saturating_add(slept);
+        }
+        for d in self.ierp.pending.values_mut() {
+            d.deadline = d.deadline.saturating_add(slept);
+            d.started_at = d.started_at.saturating_add(slept);
+        }
+        self.transport.shift_timers(slept);
+        for p in self.pending_envelopes.iter_mut() {
+            p.queued_at = p.queued_at.saturating_add(slept);
+        }
     }
 
     /// LEAF just woke up: announce, then fetch mail from the anchor.

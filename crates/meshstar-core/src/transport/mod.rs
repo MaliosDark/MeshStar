@@ -295,6 +295,16 @@ impl Transport {
         self.outstanding.iter().filter(|o| !o.stored).map(|o| o.next_retry).min()
     }
 
+    /// Postpone every timer by `delta` (node was asleep).
+    pub fn shift_timers(&mut self, delta: u64) {
+        for o in self.outstanding.iter_mut() {
+            if o.next_retry != u64::MAX {
+                o.next_retry = o.next_retry.saturating_add(delta);
+            }
+            o.started_at = o.started_at.saturating_add(delta);
+        }
+    }
+
     /// Update the stored copy of the last transmitted packet.
     pub fn set_last_packet(&mut self, dst: &Address, seq: u16, p: Packet) {
         if let Some(o) = self.outstanding.iter_mut().find(|o| &o.dst == dst && o.seq == seq) {

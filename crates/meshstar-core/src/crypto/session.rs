@@ -62,6 +62,10 @@ pub struct Session {
     pub received: u64,
     /// Set once a rekey handshake has been started for this session.
     pub rekey_in_progress: bool,
+    /// Initiator: handshake message 3, kept for retransmission on a
+    /// NO_SESSION notice (the responder installs its session only on m3).
+    pub m3: Option<alloc::vec::Vec<u8>>,
+    pub m3_resends: u8,
 }
 
 impl Session {
@@ -79,6 +83,8 @@ impl Session {
             sent: 0,
             received: 0,
             rekey_in_progress: false,
+            m3: None,
+            m3_resends: 0,
         }
     }
 

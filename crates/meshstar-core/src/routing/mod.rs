@@ -70,12 +70,16 @@ impl Default for RoutingConfig {
 
 /// Cost of one link. `quality` 0..255 from the neighbour table, `congestion`
 /// 0..255 (local channel utilisation estimate of the relaying node).
-/// A perfect link costs 100; a link at quality 128 costs ~200.
+/// A perfect link costs 100; cost grows with the square of the quality
+/// deficit, so a link at quality 128 costs ~400 and one at 64 ~1600: a
+/// marginal hop is worse than three solid ones, which is what measured
+/// hop-by-hop loss on LoRa links looks like.
 pub fn link_cost(quality: u8, congestion: u8) -> u16 {
-    let q = quality.max(1) as u32;
-    let base = 100 * 255 / q; // 100 .. 25500
-    let c = congestion as u32 * 100 / 255; // 0..100
-    (base + c).min(u16::MAX as u32) as u16
+    let q = quality.max(1) as u64;
+    let ratio = 255 * 256 / q; // 256 .. 65280 (x256 fixed point)
+    let base = (100 * ratio * ratio) >> 16; // 100 .. ~6.5M
+    let c = congestion as u64 * 100 / 255; // 0..100
+    (base + c).min(u16::MAX as u64) as u16
 }
 
 /// Bounded route cache.
@@ -296,8 +300,11 @@ mod tests {
     #[test]
     fn link_cost_curve() {
         assert_eq!(link_cost(255, 0), 100);
-        assert!(link_cost(128, 0) > 190 && link_cost(128, 0) < 210);
-        assert!(link_cost(255, 255) == 200);
-        assert!(link_cost(1, 0) > 20000);
+        assert!(link_cost(128, 0) > 380 && link_cost(128, 0) < 420, "{}", link_cost(128, 0));
+        assert!(link_cost(64, 0) > 1500 && link_cost(64, 0) < 1700);
+        assert_eq!(link_cost(255, 255), 200);
+        assert_eq!(link_cost(1, 0), u16::MAX);
+        // three solid hops beat one marginal hop
+        assert!(3 * link_cost(230, 0) < link_cost(100, 0));
     }
 }

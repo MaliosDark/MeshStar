@@ -1,5 +1,6 @@
 [package]
 name = "meshstar-sim"
+description = "Discrete-event simulator for MeshStar networks: link model, collisions, mobility, sleeping LEAF nodes, metrics, ZRP vs flooding comparison"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,4 +8,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-meshstar-core = { path = "../meshstar-core", default-features = false }
+meshstar-core = { path = "../meshstar-core" }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true }
+rand_core = { workspace = true }
+rand_chacha = { workspace = true }
+log = { workspace = true }

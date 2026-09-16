@@ -55,21 +55,60 @@ impl Node {
             return;
         }
         let key = p.header.key();
+        let for_me = p.header.dst == me;
+        // Plaintext link acknowledgement from a neighbour.
+        if p.header.ptype == PacketType::Control && for_me && p.payload.len() == 5 && p.payload[0] == control::LINK_ACK {
+            if let Some(pv) = prev {
+                let id = u32::from_be_bytes([p.payload[1], p.payload[2], p.payload[3], p.payload[4]]);
+                let acked: Vec<crate::packet::PacketKey> = self.hop_pending.iter().filter(|h| h.key.id == id && h.next_hop == pv).map(|h| h.key).collect();
+                for k in acked {
+                    self.hop_confirmed(&k, pv);
+                }
+            }
+            return;
+        }
+        // Plaintext "no session" notice: our message 3 was lost.
+        if p.header.ptype == PacketType::Control && for_me && p.payload.len() == 1 && p.payload[0] == control::NO_SESSION {
+            self.on_no_session_notice(src, now);
+            return;
+        }
+        // Implicit hop acknowledgement: the next hop relayed our packet.
+        if let Some(pv) = prev {
+            if p.header.hops > 0 {
+                self.hop_confirmed(&key, pv);
+            }
+        }
         // ROUTE_REQUEST copies are arbitrated by the ZRP request table
         // (a much cheaper copy may be relayed once more); everything else
         // is strictly once.
         if p.header.ptype != PacketType::RouteRequest && !self.seen.observe(key, now) {
             self.counters.rx_duplicates += 1;
             self.sched.heard(&key);
+            // A retransmitted unicast for us to handle: the sender missed our
+            // confirmation, answer with a cheap link ack instead of silence.
+            if (for_me || p.header.next_hop == me.short()) && !p.header.dst.is_broadcast() {
+                if let Some(pv) = prev {
+                    self.send_link_ack(pv, p.header.packet_id, now);
+                }
+            }
             return;
         }
-        // Reverse route to the source.
-        if let Some(pv) = prev {
-            let hops = p.header.hops.saturating_add(1);
-            let cost = (hops as u32 * self.link_cost_to(&pv) as u32).min(u16::MAX as u32) as u16;
-            self.learn_route(src, pv, hops, cost, RouteSource::Reverse, None, now);
+        // Final hop of a unicast: confirm to the previous hop.
+        if for_me && !p.header.ptype.is_link_local() {
+            if let Some(pv) = prev {
+                self.send_link_ack(pv, p.header.packet_id, now);
+            }
         }
-        let for_me = p.header.dst == me;
+        // Reverse route to the source, only when we have none: costs
+        // guessed from hop counts must not displace routes with measured
+        // costs (that is how forwarding loops are born).
+        if let Some(pv) = prev {
+            if self.routes.lookup(&src, now).is_none() && !self.neighbors.contains(&src) {
+                let hops = p.header.hops.saturating_add(1);
+                let cost = (hops as u32 * self.link_cost_to(&pv) as u32).min(u16::MAX as u32) as u16;
+                self.learn_route(src, pv, hops, cost, RouteSource::Reverse, None, now);
+            }
+        }
         let bcast = p.header.dst.is_broadcast();
         if for_me {
             self.counters.rx_for_us += 1;
@@ -84,6 +123,10 @@ impl Node {
                 }
             }
             PacketType::RouteReply => {
+                if let Ok(r) = RouteReply::decode(&p.payload) {
+                    // origin of the request = destination of the reply
+                    self.rrep_pending.heard(p.header.dst, r.req_id, r.cost);
+                }
                 if for_me {
                     self.handle_route_reply(&p, prev, now);
                 } else if !bcast {
@@ -281,6 +324,7 @@ impl Node {
                 p.header.relay = me.short();
                 self.routes.touch(&dst, &nh, now);
                 let jitter = self.rng.next_u32() % (self.cfg.unicast_forward_jitter_ms.max(1));
+                self.track_hop(&p, nh, now + jitter as u64, true);
                 self.enqueue_packet(p, now + jitter as u64, prio::DATA, true);
             }
             None => {
@@ -332,12 +376,19 @@ impl Node {
         let want_key = q.flags & rreq_flags::WANT_KEY != 0;
         // 1. We are the target.
         if q.target == me {
-            let key = if want_key { Some(self.id.public().public_key_bytes()) } else { None };
             let mut rflags = 0;
             if self.cfg.role == Role::Leaf {
                 rflags |= rrep_flags::TARGET_LEAF;
             }
-            self.send_route_reply(origin, RouteReply { target: me, req_id: p.header.packet_id, hops_to_target: 0, cost: 0, flags: rflags, target_key: key }, now);
+            // Answer a piggybacked Noise message 1 inside the reply.
+            let handshake = if !q.handshake.is_empty() && !self.sessions.contains_key(&origin) {
+                self.responder_start(origin, &q.handshake, now).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            // Message 2 already carries our Ed25519 key.
+            let key = if want_key && handshake.is_empty() { Some(self.id.public().public_key_bytes()) } else { None };
+            self.send_route_reply(origin, RouteReply { target: me, req_id: p.header.packet_id, hops_to_target: 0, cost: 0, flags: rflags, target_key: key, handshake }, now);
             return;
         }
         let known_key = self.key_dir.get(&q.target).map(|k| k.public_key_bytes());
@@ -347,26 +398,22 @@ impl Node {
                 if n.is_leaf() {
                     let cost = link_cost(n.link_quality(), 0);
                     self.ierp.proxy_replies_sent += 1;
-                    self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: 1, cost, flags: rrep_flags::PROXY | rrep_flags::TARGET_LEAF, target_key: if want_key { known_key } else { None } }, now);
+                    self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: 1, cost, flags: rrep_flags::PROXY | rrep_flags::TARGET_LEAF, target_key: if want_key { known_key } else { None }, handshake: Vec::new() }, now);
                     return;
                 }
             }
         }
-        // 3. Early termination: target inside our zone.
+        // 3. Sleeping LEAF behind an ANCHOR in our zone: answer on the
+        //    anchor's behalf (the request would never reach the leaf).
+        //    Awake targets answer themselves: replies from every node that
+        //    merely knows the target cost far more airtime than one extra
+        //    flood hop (measured in the simulator), so intra-zone knowledge
+        //    is used to route and to prune, not to reply.
         if let Some(z) = self.zone.get(&q.target).copied() {
-            if !(z.is_sleeping()) {
-                let cost = (z.distance as u32 * link_cost(z.quality, 0) as u32).min(u16::MAX as u32) as u16;
-                let mut rflags = 0;
-                if z.is_leaf() {
-                    rflags |= rrep_flags::TARGET_LEAF;
-                }
-                self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: z.distance, cost, flags: rflags, target_key: if want_key { known_key } else { None } }, now);
-                return;
-            }
             if let Some(anchor) = self.zone.anchor_for(&q.target) {
                 // Sleeping leaf behind an anchor in our zone: point at the anchor.
                 let cost = (z.distance as u32 * link_cost(z.quality, 0) as u32).min(u16::MAX as u32) as u16;
-                self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: z.distance, cost, flags: rrep_flags::PROXY | rrep_flags::TARGET_LEAF, target_key: if want_key { known_key } else { None } }, now);
+                self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: z.distance, cost, flags: rrep_flags::PROXY | rrep_flags::TARGET_LEAF, target_key: if want_key { known_key } else { None }, handshake: Vec::new() }, now);
                 let _ = anchor;
                 return;
             }
@@ -375,7 +422,7 @@ impl Node {
         if let Some(r) = self.routes.lookup(&q.target, now).copied() {
             let fresh = now.saturating_sub(r.learned_at) < self.cfg.routing.route_ttl_ms / 4 && r.failures == 0;
             if fresh && r.source == RouteSource::Discovery && (!want_key || known_key.is_some()) {
-                self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: r.hops, cost: r.cost, flags: if r.via_anchor.is_some() { rrep_flags::PROXY } else { 0 }, target_key: if want_key { known_key } else { None } }, now);
+                self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: r.hops, cost: r.cost, flags: if r.via_anchor.is_some() { rrep_flags::PROXY } else { 0 }, target_key: if want_key { known_key } else { None }, handshake: Vec::new() }, now);
                 return;
             }
         }
@@ -398,7 +445,7 @@ impl Node {
         fp.header.ttl -= 1;
         fp.header.hops = fp.header.hops.saturating_add(1);
         fp.header.next_hop = NEXT_HOP_ANY;
-        fp.payload = RouteRequest { cost: my_cost, ..q }.encode();
+        fp.payload = RouteRequest { cost: my_cost, ..q.clone() }.encode();
         let delay = forward_delay_ms(&mut self.rng, &self.cfg.storm, meta.snr_db) as u64;
         if self.sched.is_pending(&key) {
             self.sched.cancel(&key);
@@ -440,8 +487,13 @@ impl Node {
         self.counters.rrep_received += 1;
         let cost = self.absorb_route_reply(p, &r, prev, now);
         let hops = r.hops_to_target.saturating_add(p.header.hops).saturating_add(1);
-        let queued = self.ierp.succeed(&r.target, now);
+        let mut queued = self.ierp.succeed(&r.target, now);
         self.emit(NodeEvent::RouteFound { dst: r.target, hops, cost });
+        // Piggybacked Noise message 2: finish the handshake right away and
+        // drop the now redundant queued HANDSHAKE packet.
+        if !r.handshake.is_empty() && p.header.src == r.target && self.initiator_continue(r.target, &r.handshake, now) {
+            queued.retain(|q| q.header.ptype != PacketType::Handshake);
+        }
         for q in queued {
             let _ = self.route_unicast(q, now);
         }
@@ -515,7 +567,17 @@ impl Node {
         let (ct, frag) = self.reassemble(p, now)?;
         let aad = transport_aad(&p.header, frag);
         let Some(s) = self.sessions.get_mut(&src) else {
-            self.counters.auth_failures += 1;
+            self.counters.rx_no_session += 1;
+            // Responder waiting for message 3: tell the peer (bounded).
+            if let Some(h) = self.handshakes.get_mut(&src) {
+                if h.hs.role() == crate::crypto::NoiseRole::Responder && h.attempts < 4 {
+                    h.attempts += 1;
+                    self.counters.no_session_notices += 1;
+                    let ttl = self.ttl_for(&src);
+                    let hh = self.base_header(PacketType::Control, src, ttl);
+                    let _ = self.route_unicast(Packet::new(hh, alloc::vec![control::NO_SESSION]), now);
+                }
+            }
             return None;
         };
         match s.decrypt(now, &aad, &ct) {

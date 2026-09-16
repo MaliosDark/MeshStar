@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use crate::identity::Address;
 use crate::neighbor::beacon::{zflags, ZoneEntry};
 use crate::neighbor::NeighborTable;
+use crate::routing::link_cost;
 
 /// A node known within the zone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -30,6 +31,11 @@ impl ZoneNode {
     }
     pub fn is_sleeping(&self) -> bool {
         self.flags & zflags::SLEEPING != 0
+    }
+
+    /// Path cost: hops times the cost of the worst link on the path.
+    pub fn cost(&self) -> u32 {
+        self.distance as u32 * link_cost(self.quality, 0) as u32
     }
 }
 
@@ -85,7 +91,7 @@ impl ZoneTable {
         if n.role == crate::protocol::Role::Anchor {
             flags |= zflags::ANCHOR;
         }
-        self.nodes.insert(from, ZoneNode { addr: from, distance: 1, next_hop: from, quality: lq, flags, updated_at: now });
+        self.merge(now, ZoneNode { addr: from, distance: 1, next_hop: from, quality: lq, flags, updated_at: now });
         let adj: Vec<Address> = entries.iter().filter(|e| e.distance == 1).map(|e| e.addr).chain(attached.iter().copied()).collect();
         self.adjacency.insert(from, adj);
         // Leaves attached to an anchor are reachable through it at distance 2.
@@ -103,10 +109,8 @@ impl ZoneTable {
             if d > self.radius {
                 continue;
             }
-            // Do not let a multi-hop entry shadow a direct neighbour.
-            if neighbors.contains(&e.addr) && d > 1 {
-                continue;
-            }
+            // A direct neighbour may be kept behind a relay when the direct
+            // link is poor: entries compete on path cost, not on hop count.
             self.merge(now, ZoneNode { addr: e.addr, distance: d, next_hop: from, quality: e.quality.min(lq), flags: e.flags, updated_at: now });
         }
         self.enforce_bound();
@@ -115,14 +119,15 @@ impl ZoneTable {
     fn merge(&mut self, now: u64, cand: ZoneNode) {
         match self.nodes.get(&cand.addr) {
             Some(cur) if cur.next_hop != cand.next_hop => {
-                // Prefer shorter, then better quality, unless the current one is stale.
+                // Prefer the cheaper path unless the current one is stale.
                 let stale = now.saturating_sub(cur.updated_at) > self.entry_ttl_ms / 2;
-                let better = cand.distance < cur.distance || (cand.distance == cur.distance && cand.quality > cur.quality);
-                if better || stale {
+                if cand.cost() < cur.cost() || stale {
                     self.nodes.insert(cand.addr, cand);
                 }
             }
             _ => {
+                // Same next hop (or new): refresh. Keep a sleeping flag from
+                // an anchor's attached list only if the fresh info agrees.
                 self.nodes.insert(cand.addr, cand);
             }
         }
@@ -157,12 +162,21 @@ impl ZoneTable {
         before - self.nodes.len()
     }
 
-    /// Entries to advertise in our beacon: nodes at distance < radius
-    /// (a receiver adds one hop), closest first, bounded.
-    pub fn advertisement(&self, max: usize) -> Vec<ZoneEntry> {
+    /// Entries to advertise in our beacon: nodes at distance < radius (a
+    /// receiver adds one hop). At most `max` per beacon; when there are
+    /// more, successive beacons (`round`) rotate through the list so every
+    /// entry is advertised within `ceil(len / max)` beacons. Receivers keep
+    /// entries for several beacon intervals, so the zone view stays whole.
+    pub fn advertisement(&self, max: usize, round: u32) -> Vec<ZoneEntry> {
         let mut v: Vec<&ZoneNode> = self.nodes.values().filter(|n| n.distance < self.radius.max(2)).collect();
-        v.sort_by_key(|n| (n.distance, u8::MAX - n.quality));
-        v.into_iter().take(max).map(|n| ZoneEntry { addr: n.addr, distance: n.distance, quality: n.quality, flags: n.flags }).collect()
+        if v.is_empty() || max == 0 {
+            return Vec::new();
+        }
+        v.sort_by_key(|n| n.addr);
+        let len = v.len();
+        let windows = len.div_ceil(max);
+        let start = (round as usize % windows) * max;
+        v.into_iter().cycle().skip(start).take(max.min(len)).map(|n| ZoneEntry { addr: n.addr, distance: n.distance, quality: n.quality, flags: n.flags }).collect()
     }
 
     /// Advertised neighbours of `node` (if it is our neighbour).
@@ -240,9 +254,14 @@ mod tests {
         let leaf = z.get(&a(9)).unwrap();
         assert!(leaf.is_leaf() && leaf.is_sleeping());
         assert_eq!(z.anchor_for(&a(9)), Some(a(3)));
-        let adv = z.advertisement(10);
+        let adv = z.advertisement(10, 0);
         assert!(adv.iter().all(|e| e.distance == 1));
         assert_eq!(adv.len(), 2);
+        // rotation covers everything over successive rounds
+        let r0 = z.advertisement(1, 0);
+        let r1 = z.advertisement(1, 1);
+        assert_ne!(r0[0].addr, r1[0].addr);
+        assert_eq!(z.advertisement(1, 2)[0].addr, r0[0].addr);
         assert_eq!(z.remove_via(&a(2)), alloc::vec![a(2), a(4)]);
         assert!(z.get(&a(2)).is_none());
     }

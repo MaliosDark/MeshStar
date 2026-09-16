@@ -34,11 +34,14 @@ pub struct NeighborConfig {
     pub max_neighbors: usize,
     /// EWMA weight (0..1) for RSSI/SNR smoothing.
     pub ewma_alpha: f32,
+    /// Demodulation SNR threshold of the modem profile, dB (quality is
+    /// measured as margin above it). Set from `LoRaProfile::demod_snr_db`.
+    pub snr_floor_db: f32,
 }
 
 impl Default for NeighborConfig {
     fn default() -> Self {
-        Self { beacon_interval_ms: 60_000, beacon_jitter_ms: 10_000, full_beacon_every: 5, timeout_intervals: 4, max_neighbors: 48, ewma_alpha: 0.3 }
+        Self { beacon_interval_ms: 120_000, beacon_jitter_ms: 20_000, full_beacon_every: 6, timeout_intervals: 4, max_neighbors: 48, ewma_alpha: 0.3, snr_floor_db: -10.0 }
     }
 }
 
@@ -72,6 +75,12 @@ pub struct Neighbor {
     /// Direct transmissions to this neighbour that were never acknowledged
     /// at any layer while a delivery was expected.
     pub failures: u8,
+    /// Copied from the table configuration so `link_quality` is self contained.
+    pub snr_floor_db: f32,
+    /// Unicast transmissions attempted towards this neighbour (including
+    /// hop retransmissions) and how many were confirmed: ETX statistics.
+    pub tx_attempts: u32,
+    pub tx_confirmed: u32,
 }
 
 impl Neighbor {
@@ -95,34 +104,67 @@ impl Neighbor {
             attached: Vec::new(),
             packets: 0,
             failures: 0,
+            snr_floor_db: -10.0,
+            tx_attempts: 0,
+            tx_confirmed: 0,
         }
     }
 
-    /// Beacon delivery ratio 0..1 (1 until evidence says otherwise).
+    /// Beacon delivery ratio 0..1 with a Bayesian prior: a neighbour heard
+    /// once is not yet trusted.
     pub fn delivery_ratio(&self) -> f32 {
-        if self.beacons_expected == 0 {
-            1.0
-        } else {
-            (self.beacons_received as f32 / self.beacons_expected as f32).clamp(0.05, 1.0)
-        }
+        ((self.beacons_received as f32 + 1.0) / (self.beacons_expected as f32 + 2.0)).clamp(0.05, 1.0)
     }
 
-    /// Link quality 0..255 combining delivery ratio, SNR margin and failures.
+    /// SNR margin above the demodulation threshold, dB. Received packets are
+    /// survivors, so the measured SNR is optimistic near the threshold; the
+    /// delivery ratio corrects for that over time.
+    pub fn snr_margin_db(&self) -> f32 {
+        self.snr_db - self.snr_floor_db
+    }
+
+    /// Expected transmission count towards this neighbour (1.0 = every
+    /// unicast confirmed at the first attempt). Smoothed with a prior so a
+    /// single loss does not condemn a link; decays as statistics grow.
+    pub fn etx(&self) -> f32 {
+        (self.tx_attempts as f32 + 2.0) / (self.tx_confirmed as f32 + 2.0)
+    }
+
+    /// Link quality 0..255 combining SNR margin, beacon delivery ratio,
+    /// measured ETX and recent hard failures. A link at the demodulation
+    /// threshold scores ~25, a link with 12 dB of margin, perfect beacon
+    /// delivery and ETX 1 scores 255.
     pub fn link_quality(&self) -> u8 {
-        let snr = ((self.snr_db + 20.0) / 30.0).clamp(0.0, 1.0); // -20..+10 dB
+        let margin = (self.snr_margin_db() / 12.0).clamp(0.0, 1.0);
         let dr = self.delivery_ratio();
         let fail = 1.0 - (self.failures as f32 * 0.15).min(0.8);
-        let q = (0.5 * dr + 0.35 * snr + 0.15) * fail;
+        let etx = (1.0 / self.etx()).clamp(0.1, 1.0);
+        let q = (0.4 * margin + 0.3 * dr + 0.3 * etx) * fail;
         (q.clamp(0.0, 1.0) * 255.0) as u8
+    }
+
+    pub fn record_tx_attempt(&mut self) {
+        self.tx_attempts = self.tx_attempts.saturating_add(1);
+        if self.tx_attempts > 200 {
+            // keep the estimate responsive
+            self.tx_attempts /= 2;
+            self.tx_confirmed /= 2;
+        }
+    }
+
+    pub fn record_tx_confirmed(&mut self) {
+        self.tx_confirmed = self.tx_confirmed.saturating_add(1).min(self.tx_attempts);
     }
 
     pub fn is_leaf(&self) -> bool {
         self.role == Role::Leaf
     }
 
-    /// True if the peer is a sleeping LEAF right now (as far as we know).
+    /// True if the peer is a LEAF that is not known to be awake right now.
+    /// A LEAF whose schedule we have not heard is assumed asleep: traffic
+    /// for it goes through its ANCHOR, which holds it until the next wake-up.
     pub fn is_sleeping(&self, now: u64) -> bool {
-        self.is_leaf() && self.awake_until.map(|t| now > t).unwrap_or(false)
+        self.is_leaf() && self.awake_until.map(|t| now > t).unwrap_or(true)
     }
 }
 
@@ -222,7 +264,9 @@ impl NeighborTable {
                     }
                 }
             }
-            self.map.insert(src, Neighbor::new(src, b.role, now, meta));
+            let mut nb = Neighbor::new(src, b.role, now, meta);
+            nb.snr_floor_db = self.cfg.snr_floor_db;
+            self.map.insert(src, nb);
             obs.is_new = true;
         }
         let a = self.cfg.ewma_alpha;
@@ -366,8 +410,8 @@ mod tests {
         let n = t.get(&a).unwrap();
         assert_eq!(n.beacons_received, 3);
         assert_eq!(n.beacons_expected, 4);
-        assert!((n.delivery_ratio() - 0.75).abs() < 1e-5);
-        assert!(n.link_quality() > 100);
+        assert!((n.delivery_ratio() - 4.0 / 6.0).abs() < 1e-5); // (3+1)/(4+2)
+        assert!(n.link_quality() > 120, "{}", n.link_quality());
         assert!(t.expire(5000).is_empty());
         assert_eq!(t.expire(7000), alloc::vec![a]);
         assert!(t.is_empty());

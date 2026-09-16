@@ -27,14 +27,17 @@ pub struct LoRaProfile {
 }
 
 impl LoRaProfile {
-    /// MeshStar default profile (EU 868 ISM, 125 kHz, SF9, 4/6): a balance
-    /// between range and airtime for a routed mesh. Sync word 0x1A is
-    /// private and distinct from Meshtastic (0x2B) and LoRaWAN (0x34).
+    /// MeshStar default profile (EU 868 ISM, 125 kHz, SF8, 4/5, ~2.9 kbps):
+    /// a routed mesh spends its airtime on data, not on repetition, so it
+    /// prefers a faster modem than flooding meshes (a 100 byte frame takes
+    /// 0.31 s here versus 0.57 s at SF9 4/6 or 1.0 s at SF11 250 kHz).
+    /// Sync word 0x1A is private and distinct from Meshtastic (0x2B),
+    /// MeshCore (0x12) and LoRaWAN (0x34).
     pub const MESHSTAR_EU868: LoRaProfile = LoRaProfile {
         frequency_hz: 869_525_000,
         bandwidth_hz: 125_000,
-        spreading_factor: 9,
-        coding_rate: 6,
+        spreading_factor: 8,
+        coding_rate: 5,
         sync_word: 0x1A,
         preamble_symbols: 12,
         crc: true,
@@ -43,6 +46,13 @@ impl LoRaProfile {
     };
 
     pub const MESHSTAR_US915: LoRaProfile = LoRaProfile { frequency_hz: 915_000_000, tx_power_dbm: 20, ..Self::MESHSTAR_EU868 };
+
+    /// Long range variant (SF10, 4/6): about 6 dB more link budget at a
+    /// quarter of the throughput. For sparse rural deployments.
+    pub const MESHSTAR_EU868_LONG: LoRaProfile = LoRaProfile { spreading_factor: 10, coding_rate: 6, ..Self::MESHSTAR_EU868 };
+
+    /// Dense / urban variant (SF7, 250 kHz): short range, high throughput.
+    pub const MESHSTAR_EU868_FAST: LoRaProfile = LoRaProfile { spreading_factor: 7, bandwidth_hz: 250_000, ..Self::MESHSTAR_EU868 };
 
     /// Two byte sync word register value for SX126x (0x12 -> 0x1424).
     pub fn sync_word_sx126x(&self) -> u16 {
@@ -84,6 +94,22 @@ impl LoRaProfile {
     pub fn bitrate_bps(&self) -> u32 {
         let sf = self.spreading_factor as u64;
         (sf * self.bandwidth_hz as u64 * 4 / ((1u64 << sf) * self.coding_rate as u64)) as u32
+    }
+
+    /// Demodulation SNR threshold in dB for this spreading factor (Semtech
+    /// datasheet). Links below it fail; the neighbour quality metric
+    /// measures the margin above it.
+    pub fn demod_snr_db(&self) -> f32 {
+        match self.spreading_factor {
+            5 => -2.5,
+            6 => -5.0,
+            7 => -7.5,
+            8 => -10.0,
+            9 => -12.5,
+            10 => -15.0,
+            11 => -17.5,
+            _ => -20.0,
+        }
     }
 
     /// Rough receiver sensitivity in dBm for this SF/BW (SX1262 datasheet

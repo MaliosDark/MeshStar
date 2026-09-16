@@ -53,6 +53,14 @@ pub struct Counters {
     pub envelopes_opened: u32,
     pub neighbors_lost: u32,
     pub loops_detected: u32,
+    pub rx_no_session: u32,
+    pub hs_read_failures: u32,
+    pub hop_retransmissions: u32,
+    pub hop_failures: u32,
+    pub hop_reroutes: u32,
+    pub m3_resends: u32,
+    pub no_session_notices: u32,
+    pub link_acks_sent: u32,
 }
 
 /// Summary of one session.
