@@ -22,10 +22,10 @@ $PY -c "import esptool, serial" 2>/dev/null || { echo "esptool/pyserial not foun
 ESPTOOL="$PY -m esptool --port $PORT --baud 921600"
 
 echo "== chip info"
-$ESPTOOL chip_id | tee "$OUT/chip_info.txt"
-$ESPTOOL flash_id | tee -a "$OUT/chip_info.txt"
+$ESPTOOL chip-id | tee "$OUT/chip_info.txt"
+$ESPTOOL flash-id | tee -a "$OUT/chip_info.txt"
 
-SIZE=$(grep -i "Detected flash size" "$OUT/chip_info.txt" | tail -1 | grep -oE "[0-9]+MB" | head -1 || true)
+SIZE=$(grep -iE "flash size|Embedded Flash|Flash:" "$OUT/chip_info.txt" | grep -oE "[0-9]+MB" | head -1 || true)
 case "$SIZE" in
   4MB) BYTES=0x400000 ;;
   8MB) BYTES=0x800000 ;;
@@ -34,7 +34,7 @@ case "$SIZE" in
 esac
 
 echo "== partition table"
-$ESPTOOL read_flash 0x8000 0xC00 "$OUT/partitions.bin"
+$ESPTOOL read-flash 0x8000 0xC00 "$OUT/partitions.bin"
 $PY - "$OUT/partitions.bin" > "$OUT/partitions.csv" <<'PYEOF' || true
 import struct, sys
 d = open(sys.argv[1], "rb").read()
@@ -50,7 +50,7 @@ PYEOF
 cat "$OUT/partitions.csv"
 
 echo "== full flash ($BYTES bytes) -> full_flash.bin (takes a few minutes)"
-$ESPTOOL read_flash 0 $BYTES "$OUT/full_flash.bin"
+$ESPTOOL read-flash 0 $BYTES "$OUT/full_flash.bin"
 sha256sum "$OUT/full_flash.bin" | tee "$OUT/full_flash.sha256"
 
 echo "== serial capture (60 s, resetting the board via DTR/RTS)"
