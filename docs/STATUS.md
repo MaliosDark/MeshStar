@@ -75,6 +75,10 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
 7. Modelado de flooding gestionado de Meshtastic y repetidores MeshCore con más fidelidad en el
    simulador (hoy: flood genérico con tope de saltos).
 8. Persistencia de estado en el firmware (identidad ya se guarda; falta buzón/rutas).
+9. UI de dispositivo (hecha 2026-09-16, ver docs/UI.md): barra de estado invertida, listas
+   unificadas con insignias de protocolo y etiqueta de seguridad, chats, redes, señal con
+   sparkline, nodo, ajustes; falta: responder desde el dispositivo (app BLE), toggle de
+   bridge por red, apagado de pantalla por tiempo, ajustes persistentes.
 
 ## 5. Cómo trabajar
 

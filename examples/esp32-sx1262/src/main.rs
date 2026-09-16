@@ -115,21 +115,44 @@ fn main() -> ! {
     let mut node = Node::new(cfg, identity, rng_from_seed(rng_seed), now_ms());
     println!("MeshStar {} role {} profile {}", node.address(), node.role().name(), profile);
 
-    // OLED (SSD1306 over I2C) and the page button.
+    // OLED (SSD1306 over I2C): Vext (GPIO36, active low) powers the display on
+    // the Heltec V3; reset it, then init.
+    let _vext = Output::new(peripherals.GPIO36, Level::Low);
+    delay.delay_millis(20);
     let mut oled_rst = Output::new(peripherals.GPIO21, Level::Low);
     delay.delay_millis(10);
     oled_rst.set_high();
+    delay.delay_millis(10);
     let i2c = esp_hal::i2c::master::I2c::new(peripherals.I2C0, esp_hal::i2c::master::Config::default().with_frequency(400.kHz()))
         .expect("i2c")
         .with_sda(peripherals.GPIO17)
         .with_scl(peripherals.GPIO18);
     let mut oled = ui::Ssd1306::new(i2c, 0x3C);
-    let have_oled = oled.init().is_ok();
+    let have_oled = match oled.init() {
+        Ok(()) => {
+            println!("oled: SSD1306 at 0x3C ready");
+            true
+        }
+        Err(e) => {
+            println!("oled: init failed ({:?}), running headless", e);
+            false
+        }
+    };
+    let mut model = ui::UiModel::new(&node.config().name, node.address(), node.role());
+    if have_oled {
+        ui::splash(&mut oled, &model.name, &model.short_id, concat!("v", env!("CARGO_PKG_VERSION"), " ZRP+Noise XX"));
+    }
+    let mut ui = ui::Ui::new();
     let button = Input::new(peripherals.GPIO0, Pull::Up);
-    let mut page = ui::Page::Status;
-    let mut button_was_down = false;
+    let mut btn = ui::Button::new();
     let mut last_render = 0u64;
     let boot_ms = now_ms();
+    // Battery: VBAT/4.9 on GPIO1 while ADC_CTRL (GPIO37) is low.
+    let mut adc_ctrl = Output::new(peripherals.GPIO37, Level::High);
+    let mut adc_cfg = esp_hal::analog::adc::AdcConfig::new();
+    let mut vbat_pin = adc_cfg.enable_pin(peripherals.GPIO1, esp_hal::analog::adc::Attenuation::_11dB);
+    let mut adc = esp_hal::analog::adc::Adc::new(peripherals.ADC1, adc_cfg);
+    let mut last_battery = 0u64;
 
     // Console on UART0.
     let mut uart: Uart<'_, Blocking> = Uart::new(peripherals.UART0, esp_hal::uart::Config::default()).expect("uart");
@@ -170,8 +193,11 @@ fn main() -> ! {
                 if let Some(mode) = compat.mode {
                     let mut r = [0u8; 32];
                     lbt_rng.fill_bytes(&mut r);
-                    let line = compat.on_rx(&rx_buf[..n], &meta, now, r);
+                    let (line, msg) = compat.on_rx(&rx_buf[..n], &meta, now, r);
                     println!("[compat {}] rx {} B rssi {} snr {:.1}: {}", mode, n, meta.rssi_dbm, meta.snr_db, line);
+                    if let Some(m) = msg {
+                        model.observe_foreign(&m, meta.rssi_dbm, now);
+                    }
                     println!("[compat raw] {:02x?}", &rx_buf[..n.min(64)]);
                 } else {
                     node.on_radio_rx(&rx_buf[..n], meta);
@@ -199,6 +225,7 @@ fn main() -> ! {
                 NodeEvent::MessageReceived { from, payload, protection, hops, rssi_dbm, snr_db, .. } => {
                     let text = core::str::from_utf8(&payload).unwrap_or("<binary>");
                     println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB): {}", from, protection, hops, rssi_dbm, snr_db, text);
+                    model.push_native(from, text, protection, rssi_dbm, hops, now);
                 }
                 NodeEvent::Delivered { handle, to, rtt_ms } => println!("[ack] #{} to {} in {} ms", handle, to, rtt_ms),
                 NodeEvent::Stored { handle, anchor } => println!("[stored] #{} at {}", handle, anchor),
@@ -284,18 +311,57 @@ fn main() -> ! {
                 }
             }
         }
-        // UI: button cycles pages; redraw at 2 Hz.
-        let down = button.is_low();
-        if down && !button_was_down {
-            page = page.next();
+        // UI: one button (short = next, long = act); redraw at 4 Hz.
+        let now = now_ms();
+        if let Some(press) = btn.update(button.is_low(), now) {
+            model.last_activity = now;
+            if !model.screen_on {
+                model.screen_on = true;
+                let _ = oled.power(true);
+            } else {
+                match ui.press(press, &mut model) {
+                    ui::Action::None => {}
+                    ui::Action::CycleCompat => {
+                        compat.mode = match compat.mode {
+                            None => Some(meshstar_protocols::model::ProtocolId::MeshCore),
+                            Some(meshstar_protocols::model::ProtocolId::MeshCore) => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
+                            Some(_) => None,
+                        };
+                        let p = compat.mode.map(compat::Compat::profile).unwrap_or(profile);
+                        match radio.configure(&p).and_then(|_| radio.start_receive()) {
+                            Ok(()) => println!("compat {:?}: radio {}", compat.mode, p),
+                            Err(e) => println!("radio error {:?}", e),
+                        }
+                        compat_last_periodic = 0;
+                    }
+                    ui::Action::Advert => compat_last_periodic = 0,
+                    ui::Action::ScreenOff => {
+                        model.screen_on = false;
+                        let _ = oled.power(false);
+                    }
+                    ui::Action::Reboot => esp_hal::reset::software_reset(),
+                }
+            }
             last_render = 0;
         }
-        button_was_down = down;
-        let now = now_ms();
-        if have_oled && now.saturating_sub(last_render) >= 500 {
+        if have_oled && model.screen_on && now.saturating_sub(last_render) >= 250 {
             last_render = now;
+            if now.saturating_sub(last_battery) >= 5000 {
+                last_battery = now;
+                adc_ctrl.set_low();
+                delay.delay_millis(2);
+                if let Ok(raw) = nb::block!(adc.read_oneshot(&mut vbat_pin)) {
+                    // 12-bit sample, ~3.1 V full scale at 11 dB, divider 390k/100k.
+                    let mv = raw as u32 * 3100 / 4095 * 49 / 10;
+                    model.battery_mv = if mv > 2500 { Some(mv) } else { None };
+                }
+                adc_ctrl.set_high();
+            }
             let stats = radio.stats();
-            ui::render(&mut oled, page, &mut node, &stats, None, (now - boot_ms) / 1000);
+            model.sample_signal(&stats);
+            model.sync_native(&node, now);
+            model.compat = compat.mode.map(ui::Proto::from_id);
+            ui.render(&mut oled, &model, &stats, (now - boot_ms) / 1000, now);
         }
         // Sleep until something is due (light sleep is left to the board integrator).
         let wake = node.next_wakeup();

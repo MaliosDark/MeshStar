@@ -7,6 +7,55 @@ node and message. Rich interaction (typing, maps, settings forms) happens in
 the companion app over BLE, as on both competitors; the device UI is for
 glanceable state and a few actions.
 
+## What is implemented (`examples/common/ui.rs`)
+
+The Heltec V3 firmware ships this UI. A pixel framebuffer driver for the
+SSD1306 (page-mode I2C, dirty-page flushes), a 5x7 font with 2x scaling,
+icons (star, M/C badges, signal bars, battery, lock/open lock, envelope,
+antenna, anchor, moon, bridge) and the screens below. The splash shows
+the star logo, the node name, the short id and the version for as long
+as the radio and identity take to come up.
+
+```
++---------------------------------+
+|* MeshStar-A N [C]   [mail]3 Y5 [==]|   inverted status bar
+| * 6E61.1234  |||| -71   [anchor]|   Home: nodes from all networks
+| C Chiripa    |||  -84  o CH     |   badge, name, bars, RSSI, security
+| M Meshtasti  ||   -91  o CH     |
+| * 1020.3040  (moon)     --      |   sleeping LEAF
+| C ~ab        |    -104 o ?      |   heard but undecryptable
++---------------------------------+
+```
+
+Screens (ring, short press moves the cursor and past the last row goes
+to the next screen; long press acts):
+
+| screen | rows | long press |
+|---|---|---|
+| Home | every node heard: MeshStar neighbours and zone members, Meshtastic and MeshCore nodes seen in compat mode; sorted by signal | node card (protocol, role, RSSI/hops, security label spelled out, last seen) |
+| Chats | last 8 messages, newest first, badge + sender + text + age, unread dot | message view: wrapped text, security label, RSSI/hops; marks it read |
+| Networks | one row per network: MeshStar zone, LongFast (M), Public (C): node count, bars, RSSI, plus the compat state | cycle compat: off > MeshCore > Meshtastic > off (retunes the radio) |
+| Signal | big RSSI, bars, SNR, rx/tx/crc/airtime, sparkline of the last 54 frames | - |
+| Node | name, role, id, zone size, battery (mV and %), uptime | - |
+| Settings | Compat, Advert now, Screen off, Role (read-only), Reboot | act on the row |
+
+Security labels: `E2E` (Noise XX session) and `ENV`/`DM` with a closed
+lock; `GRP`, `CH` (foreign shared channel), `BR` (bridged) and `?`
+(encrypted, no key) with an open lock; `TXT` (plaintext) and `--` (no
+session yet) without a lock. The header shows the protocol badge of the
+active compat mode and, when bridging is enabled, the bridge icon.
+
+Battery is read from VBAT/4.9 on GPIO1 while ADC_CTRL (GPIO37) is low,
+every 5 s; Vext (GPIO36, active low) powers the OLED and is enabled at
+boot. The button decoder reports a short press on release and one long
+press after 600 ms held.
+
+Not yet on the device: typing/replying (the companion app over BLE will do
+it), the bridge toggle per network (the gateway is not compiled into the
+firmware yet), persistent settings, screen timeout.
+
+## Design notes (original target)
+
 ## Input model
 
 One button (GPIO0 on Heltec):

@@ -18,6 +18,7 @@ embedded-storage = "0.3"
 embedded-hal = "1.0"
 embedded-hal-bus = "0.2"
 heapless = "0.8"
+nb = "1"
 log = "0.4"
 rand_core = { version = "0.6", default-features = false }
 

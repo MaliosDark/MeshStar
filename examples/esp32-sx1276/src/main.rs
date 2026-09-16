@@ -120,10 +120,23 @@ fn main() -> ! {
         .with_sda(peripherals.GPIO4)
         .with_scl(peripherals.GPIO15);
     let mut oled = ui::Ssd1306::new(i2c, 0x3C);
-    let have_oled = oled.init().is_ok();
+    let have_oled = match oled.init() {
+        Ok(()) => {
+            println!("oled: SSD1306 at 0x3C ready");
+            true
+        }
+        Err(e) => {
+            println!("oled: init failed ({:?}), running headless", e);
+            false
+        }
+    };
+    let mut model = ui::UiModel::new(&node.config().name, node.address(), node.role());
+    if have_oled {
+        ui::splash(&mut oled, &model.name, &model.short_id, concat!("v", env!("CARGO_PKG_VERSION"), " ZRP+Noise XX"));
+    }
+    let mut ui = ui::Ui::new();
     let button = Input::new(peripherals.GPIO0, Pull::Up);
-    let mut page = ui::Page::Status;
-    let mut button_was_down = false;
+    let mut btn = ui::Button::new();
     let mut last_render = 0u64;
     let boot_ms = now_ms();
 
@@ -164,6 +177,7 @@ fn main() -> ! {
                 NodeEvent::MessageReceived { from, payload, protection, hops, rssi_dbm, snr_db, .. } => {
                     let text = core::str::from_utf8(&payload).unwrap_or("<binary>");
                     println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB): {}", from, protection, hops, rssi_dbm, snr_db, text);
+                    model.push_native(from, text, protection, rssi_dbm, hops, now);
                 }
                 NodeEvent::Delivered { handle, to, rtt_ms } => println!("[ack] #{} to {} in {} ms", handle, to, rtt_ms),
                 NodeEvent::Stored { handle, anchor } => println!("[stored] #{} at {}", handle, anchor),
@@ -182,18 +196,31 @@ fn main() -> ! {
                 console.feed(&uart_buf[..n], &mut node, stats, &mut out);
             }
         }
-        // UI: button cycles pages; redraw at 2 Hz.
-        let down = button.is_low();
-        if down && !button_was_down {
-            page = page.next();
+        // UI: one button (short = next, long = act); redraw at 4 Hz. No
+        // compat layer in this example, so only the screen actions apply.
+        let now = now_ms();
+        if let Some(press) = btn.update(button.is_low(), now) {
+            if !model.screen_on {
+                model.screen_on = true;
+                let _ = oled.power(true);
+            } else {
+                match ui.press(press, &mut model) {
+                    ui::Action::ScreenOff => {
+                        model.screen_on = false;
+                        let _ = oled.power(false);
+                    }
+                    ui::Action::Reboot => esp_hal::reset::software_reset(),
+                    _ => {}
+                }
+            }
             last_render = 0;
         }
-        button_was_down = down;
-        let now = now_ms();
-        if have_oled && now.saturating_sub(last_render) >= 500 {
+        if have_oled && model.screen_on && now.saturating_sub(last_render) >= 250 {
             last_render = now;
             let stats = radio.stats();
-            ui::render(&mut oled, page, &mut node, &stats, None, (now - boot_ms) / 1000);
+            model.sample_signal(&stats);
+            model.sync_native(&node, now);
+            ui.render(&mut oled, &model, &stats, (now - boot_ms) / 1000, now);
         }
         // Sleep until something is due (light sleep is left to the board integrator).
         let wake = node.next_wakeup();

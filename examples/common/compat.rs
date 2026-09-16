@@ -49,16 +49,20 @@ impl Compat {
         }
     }
 
-    /// Classify and decode a received frame; returns a one-line summary.
-    pub fn on_rx(&mut self, frame: &[u8], meta: &RxMeta, now: u64, random: [u8; 32]) -> String {
+    /// Classify and decode a received frame; returns a one-line summary and
+    /// the decoded message, if any.
+    pub fn on_rx(&mut self, frame: &[u8], meta: &RxMeta, now: u64, random: [u8; 32]) -> (String, Option<UnifiedMessage>) {
         self.ctx.now_ms = now;
         self.ctx.random = random;
         self.seen += 1;
         let (d, r) = self.detector.classify(frame, meta, &self.ctx);
         match r {
-            Some(Ok(m)) => alloc::format!("[{} {}] {} -> {} {:?} {} | {}", d.protocol, d.score, m.source, m.destination, m.content_type, m.text_payload().map(|t| alloc::format!("{:?}", t)).unwrap_or_default(), m.security.label()),
-            Some(Err(e)) => alloc::format!("[{} {}] decode error {}", d.protocol, d.score, e),
-            None => alloc::format!("[unknown {} probable {:?}] {} bytes", d.score, d.probable, frame.len()),
+            Some(Ok(m)) => {
+                let line = alloc::format!("[{} {}] {} -> {} {:?} {} | {}", d.protocol, d.score, m.source, m.destination, m.content_type, m.text_payload().map(|t| alloc::format!("{:?}", t)).unwrap_or_default(), m.security.label());
+                (line, Some(m))
+            }
+            Some(Err(e)) => (alloc::format!("[{} {}] decode error {}", d.protocol, d.score, e), None),
+            None => (alloc::format!("[unknown {} probable {:?}] {} bytes", d.score, d.probable, frame.len()), None),
         }
     }
 

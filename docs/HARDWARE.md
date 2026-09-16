@@ -67,7 +67,15 @@ loop {
 ```
 
 The serial console exposes the same vocabulary as `meshstar shell`
-(`id`, `nb`, `rt`, `zone`, `ss`, `cnt`, `store`, `radio`, `power`, `send`).
+(`id`, `nb`, `rt`, `zone`, `ss`, `cnt`, `store`, `radio`, `power`, `send`),
+plus `compat meshcore|meshtastic|off`, `csend <text>` and `advert` on the
+Heltec V3 example.
+
+Heltec V3 peripherals used by the example: SX1262 on SPI2 (SCK 9, MOSI 10,
+MISO 11, NSS 8, RST 12, BUSY 13, DIO1 14); SSD1306 OLED on I2C0 (SDA 17,
+SCL 18, RST 21) powered through Vext (GPIO36, active low); PRG button on
+GPIO0; battery through the 390k/100k divider on GPIO1 (ADC1) enabled by
+ADC_CTRL (GPIO37, active low). The OLED UI is described in docs/UI.md.
 
 ## Building and flashing the examples
 
