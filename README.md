@@ -51,7 +51,7 @@ tools/                      helper scripts (e.g. read-only firmware backup)
 ## Quick start
 
 ```bash
-cargo test --workspace                 # ~250 unit + integration + interop tests
+cargo test --workspace --release       # 183 unit + integration + interop tests
 cargo build --release -p meshstar-cli
 M=target/release/meshstar
 
@@ -121,10 +121,12 @@ offline delivery, and explicit storm control with numbers behind it
 
 ## Status
 
-Working: core protocol with 12 integration scenarios, simulator, CLI, three
-protocol adapters with cross-protocol tests, benchmarks. In progress: radio
-drivers and ESP32 examples (see [docs/HARDWARE.md](docs/HARDWARE.md)), and the
-recovery of the original firmware notes (see `firmware-dump/README.md`).
+Working (183 tests): core protocol with 15 integration scenarios, simulator
+(including mixed-ecosystem scenarios), CLI, three protocol adapters with
+cross-protocol tests, measured benchmarks, SX126x/SX127x drivers with
+fake-bus tests. Not yet validated on hardware: the drivers and the ESP32
+examples (see [docs/HARDWARE.md](docs/HARDWARE.md)); the interop adapters
+were written from official sources and need a check against real devices.
 [docs/STATUS.md](docs/STATUS.md) is the living task list.
 
 ## License
