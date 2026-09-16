@@ -96,6 +96,10 @@ impl BoardConfig {
     pub const HELTEC_V3: BoardConfig = BoardConfig { high_power_pa: true, dio2_rf_switch: true, dio3_tcxo: Some(0x02), dcdc: true, tcxo_delay_ms: 5 };
 }
 
+fn same_profile(a: &LoRaProfile, b: &LoRaProfile) -> bool {
+    a.frequency_hz == b.frequency_hz && a.bandwidth_hz == b.bandwidth_hz && a.spreading_factor == b.spreading_factor && a.sync_word == b.sync_word
+}
+
 /// The driver.
 pub struct Sx126x<SPI, NSS, RST, BUSY, DIO1, D> {
     spi: SPI,
@@ -286,6 +290,72 @@ where
                 0x00, // standard IQ
             ],
         )
+    }
+
+    /// Run one CAD (channel activity detection) with the modulation of
+    /// `profile` and report whether a LoRa preamble/symbol was detected.
+    /// Only modulation parameters are switched (a few SPI writes), so a
+    /// gateway can sweep several spreading factors many times per second.
+    /// The radio is left in standby; call [`Radio::configure`] +
+    /// [`Radio::start_receive`] (or [`Sx126x::sniff`]) afterwards.
+    pub fn cad_probe(&mut self, profile: &LoRaProfile) -> Result<bool, RadioError> {
+        self.cmd(op::SET_STANDBY, &[0x00])?;
+        self.receiving = false;
+        if profile.frequency_hz != self.profile.frequency_hz {
+            self.set_frequency(profile.frequency_hz)?;
+        }
+        let bw = Self::bandwidth_code(profile.bandwidth_hz)?;
+        let ldro = if profile.low_data_rate_optimize() { 0x01 } else { 0x00 };
+        self.cmd(op::SET_MODULATION_PARAMS, &[profile.spreading_factor, bw, profile.coding_rate - 4, ldro])?;
+        let sw = profile.sync_word_sx126x();
+        self.write_register(reg::LORA_SYNC_WORD_MSB, (sw >> 8) as u8)?;
+        self.write_register(reg::LORA_SYNC_WORD_LSB, sw as u8)?;
+        let (det_peak, det_min) = match profile.spreading_factor {
+            5..=7 => (22, 10),
+            8..=10 => (23, 10),
+            _ => (24, 10),
+        };
+        // 4 symbols of CAD, exit to standby with the result in the IRQ flags
+        self.cmd(op::SET_CAD_PARAMS, &[0x02, det_peak, det_min, 0x00, 0x00, 0x00, 0x00])?;
+        self.clear_irq(0xFFFF)?;
+        self.cmd(op::SET_CAD, &[])?;
+        let budget_ms = (4 * profile.symbol_time_us() / 1000 + 5) as u32;
+        for _ in 0..budget_ms.max(1) * 2 {
+            let s = self.irq_status()?;
+            if s & irq::CAD_DONE != 0 {
+                let busy = s & irq::CAD_DETECTED != 0;
+                self.clear_irq(0xFFFF)?;
+                if busy {
+                    self.stats.cad_busy += 1;
+                }
+                return Ok(busy);
+            }
+            self.delay.delay_us(500);
+        }
+        Err(RadioError::Timeout)
+    }
+
+    /// Sweep `profiles` with CAD; on the first detection, configure that
+    /// profile fully and enter receive mode. Returns the index detected, or
+    /// `None` (radio left tuned to `fallback` in receive mode). A single
+    /// radio gateway calls this every few tens of milliseconds instead of
+    /// dwelling seconds on each profile: a preamble of 16-32 symbols lasts
+    /// far longer than one CAD sweep, so frames on any profile are caught.
+    pub fn sniff(&mut self, profiles: &[LoRaProfile], fallback: usize) -> Result<Option<usize>, RadioError> {
+        for (i, p) in profiles.iter().enumerate() {
+            if self.cad_probe(p)? {
+                self.configure(p)?;
+                self.start_receive()?;
+                return Ok(Some(i));
+            }
+        }
+        if let Some(p) = profiles.get(fallback) {
+            if !self.receiving || !same_profile(&self.profile, p) {
+                self.configure(p)?;
+                self.start_receive()?;
+            }
+        }
+        Ok(None)
     }
 
     /// Instantaneous RSSI in dBm.
@@ -610,6 +680,30 @@ mod tests {
         assert_eq!(meta.rssi_dbm, -80);
         assert!((meta.snr_db + 2.0).abs() < 0.01);
         assert_eq!(r.stats().rx_frames, 1);
+    }
+
+    #[test]
+    fn sniff_locks_onto_the_profile_with_activity() {
+        let bus = Rc::new(RefCell::new(BusState::default()));
+        let mut r = radio(&bus);
+        r.init().unwrap();
+        bus.borrow_mut().reads.push_back(vec![0x00]);
+        r.configure(&LoRaProfile::MESHSTAR_EU868).unwrap();
+        let sf8 = LoRaProfile { frequency_hz: 869_618_000, bandwidth_hz: 62_500, spreading_factor: 8, coding_rate: 8, sync_word: 0x12, ..LoRaProfile::MESHSTAR_EU868 };
+        let sf9 = LoRaProfile { spreading_factor: 9, ..sf8 };
+        // probe SF8: CAD done, nothing; probe SF9: CAD done + detected; then configure reads TX_MODULATION
+        {
+            let mut b = bus.borrow_mut();
+            b.reads.push_back(irq::CAD_DONE.to_be_bytes().to_vec());
+            b.reads.push_back((irq::CAD_DONE | irq::CAD_DETECTED).to_be_bytes().to_vec());
+            b.reads.push_back(vec![0x00]);
+        }
+        let hit = r.sniff(&[sf8, sf9], 0).unwrap();
+        assert_eq!(hit, Some(1));
+        assert_eq!(r.profile().spreading_factor, 9);
+        assert_eq!(r.stats().cad_busy, 1);
+        let w = bus.borrow().written.clone();
+        assert!(w.iter().filter(|c| c[0] == op::SET_CAD).count() == 2);
     }
 
     #[test]

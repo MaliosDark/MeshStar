@@ -165,6 +165,9 @@ pub enum SimCmd {
         native_broadcast_rate: f32,
         #[arg(long)]
         no_bridge: bool,
+        /// Single radio with CAD sniffing across profiles instead of dwelling
+        #[arg(long)]
+        sniff: bool,
     },
 }
 
@@ -239,10 +242,10 @@ pub fn run(cmd: SimCmd) {
         SimCmd::Template { common } => {
             println!("{}", serde_json::to_string_pretty(&common.scenario(Strategy::Zrp)).unwrap());
         }
-        SimCmd::Interop { common, meshtastic, meshcore, gateways, radios, native_share, foreign_rate, native_broadcast_rate, no_bridge } => {
+        SimCmd::Interop { common, meshtastic, meshcore, gateways, radios, native_share, foreign_rate, native_broadcast_rate, no_bridge, sniff } => {
             let mut w = World::new(common.scenario(Strategy::Zrp));
             let gws: Vec<usize> = gateways.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            w.with_interop(meshstar_sim::InteropParams { meshtastic_nodes: meshtastic, meshcore_nodes: meshcore, gateways: gws, gateway_radios: radios, native_share_percent: native_share, foreign_rate_per_minute: foreign_rate, native_broadcast_rate_per_minute: native_broadcast_rate, foreign_hop_cap: 3, bridge_enabled: !no_bridge });
+            w.with_interop(meshstar_sim::InteropParams { meshtastic_nodes: meshtastic, meshcore_nodes: meshcore, gateways: gws, gateway_radios: radios, gateway_sniff: sniff, native_share_percent: native_share, foreign_rate_per_minute: foreign_rate, native_broadcast_rate_per_minute: native_broadcast_rate, foreign_hop_cap: 3, bridge_enabled: !no_bridge });
             w.run();
             let im = &w.interop.as_ref().unwrap().metrics;
             println!("MeshStar side\n{}", single(&w.metrics));

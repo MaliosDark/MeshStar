@@ -61,6 +61,10 @@ pub struct InteropParams {
     pub gateways: Vec<usize>,
     /// Radios per gateway: 1 = time shared, 2+ = dedicated foreign radios.
     pub gateway_radios: usize,
+    /// Single radio with CAD sniffing: the radio sweeps every profile many
+    /// times per second and locks onto whichever shows a preamble, so it
+    /// misses a frame only while busy with another one (idealised model).
+    pub gateway_sniff: bool,
     /// Share of a single time-shared radio spent on MeshStar, percent.
     pub native_share_percent: u8,
     /// Foreign messages per minute per ecosystem.
@@ -74,7 +78,7 @@ pub struct InteropParams {
 
 impl Default for InteropParams {
     fn default() -> Self {
-        Self { meshtastic_nodes: 10, meshcore_nodes: 10, gateways: vec![0], gateway_radios: 1, native_share_percent: 50, foreign_rate_per_minute: 2.0, native_broadcast_rate_per_minute: 1.0, foreign_hop_cap: 3, bridge_enabled: true }
+        Self { meshtastic_nodes: 10, meshcore_nodes: 10, gateways: vec![0], gateway_radios: 1, gateway_sniff: false, native_share_percent: 50, foreign_rate_per_minute: 2.0, native_broadcast_rate_per_minute: 1.0, foreign_hop_cap: 3, bridge_enabled: true }
     }
 }
 
@@ -257,7 +261,7 @@ impl InteropState {
     /// Whether gateway `g` (single radio) is tuned to the native profile now.
     pub fn gateway_native_listening(&self, g: usize, now: u64) -> bool {
         let gw = &self.gateways[g];
-        if self.params.gateway_radios > 1 {
+        if self.params.gateway_radios > 1 || self.params.gateway_sniff {
             return true;
         }
         gw.radios[0].active(now).map(|s| s.profile.protocol == ProtocolId::MeshStar).unwrap_or(true)
@@ -265,6 +269,13 @@ impl InteropState {
 
     fn gateway_listening(&self, g: usize, profile: &LoRaProfile, now: u64) -> Option<usize> {
         let gw = &self.gateways[g];
+        if self.params.gateway_sniff {
+            // a sniffing radio locks onto any profile it knows, unless it is
+            // already receiving something else
+            let known = gw.radios.iter().any(|s| s.slots.iter().any(|sl| same_profile(&sl.profile.profile, profile)));
+            let busy = gw.receptions.iter().any(|r| !same_profile(&r.profile, profile));
+            return if known && !busy { Some(0) } else { None };
+        }
         for (r, sched) in gw.radios.iter().enumerate() {
             if let Some(slot) = sched.active(now) {
                 if same_profile(&slot.profile.profile, profile) {
@@ -487,6 +498,7 @@ impl World {
             }
         }
         // gateway foreign transmissions
+        let sniff = st.params.gateway_sniff;
         for g in 0..st.gateways.len() {
             let node = st.gateways[g].node;
             let (x, y) = (self.nodes[node].x, self.nodes[node].y);
@@ -502,7 +514,7 @@ impl World {
                     gw.outbox.remove(k);
                     continue;
                 };
-                let tuned = gw.radios[radio].active(now).map(|s| same_profile(&s.profile.profile, &profile)).unwrap_or(false);
+                let tuned = sniff || gw.radios[radio].active(now).map(|s| same_profile(&s.profile.profile, &profile)).unwrap_or(false);
                 if !tuned || gw.tx_until[radio] > now {
                     k += 1;
                     continue;

@@ -104,8 +104,28 @@ fn main() -> ! {
     let delay = Delay::new();
     let mut lbt_rng = rng_from_seed(rng_seed);
 
+    // Gateway sniffing (compat mode): sweep the foreign profiles with CAD
+    // between native receive polls and lock onto whatever shows a preamble.
+    // Enable by setting SNIFF to true; the frames then go through the
+    // adapter layer (meshstar-protocols) instead of the native node.
+    const SNIFF: bool = false;
+    let sniff_profiles = [
+        profile,
+        LoRaProfile { frequency_hz: 869_618_000, bandwidth_hz: 62_500, spreading_factor: 8, coding_rate: 8, sync_word: 0x12, preamble_symbols: 32, ..profile },
+        LoRaProfile { frequency_hz: 869_618_000, bandwidth_hz: 62_500, spreading_factor: 9, coding_rate: 8, sync_word: 0x12, preamble_symbols: 16, ..profile },
+    ];
+    let mut last_sniff = 0u64;
+
     loop {
         let now = now_ms();
+        if SNIFF && now.saturating_sub(last_sniff) > 50 && node.tx_queue_len() == 0 {
+            last_sniff = now;
+            match radio.sniff(&sniff_profiles, 0) {
+                Ok(Some(i)) if i > 0 => log::info!("preamble on foreign profile {}", i),
+                Err(e) => log::warn!("sniff error {:?}", e),
+                _ => {}
+            }
+        }
         // Radio receive.
         match radio.receive(&mut rx_buf) {
             Ok(Some((n, mut meta))) => {

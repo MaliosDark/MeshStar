@@ -137,11 +137,16 @@ the default policy (`meshstar sim interop`).
 
 | gateway radios | foreign msgs bridged into MeshStar | reach of MeshStar nodes | added latency | native broadcasts reaching foreign nodes | missed by schedule | gateway dup / rate-limited |
 |---|---:|---:|---:|---:|---:|---:|
-| 1 (time shared 50/25/25) | 24 / 49 | 55 % | 2.4 s | 5 / 22 | 1 740 frames | 23 / 1 |
+| 1 (time shared 50/25/25, 6 s period) | 24 / 49 | 55 % | 2.4 s | 5 / 22 | 1 740 frames | 23 / 1 |
+| 1 with **CAD sniffing** across profiles | 39 / 47 | – | 1.8 s | 9 / 25 | 33 frames | – |
 | 2 (dedicated foreign radios) | 30 / 48 | 64 % | 1.2 s | 12 / 25 | 0 | 299 / 483 |
 
 A single time-shared radio hears about half of the foreign traffic (it is
-tuned elsewhere the rest of the time) and adds a second of latency;
+tuned elsewhere the rest of the time, whatever the dwell time) and adds a
+second of latency; the same radio **sniffing with CAD** (sweeping all
+profiles every few tens of milliseconds and locking on a detected preamble,
+what the original MeshStar firmware approximated with a 15 s SF8/SF9 scan)
+recovers almost everything;
 dedicated radios bridge 63 % and the gateway rate limiter (6/min, burst 3)
 becomes the bottleneck, by design. Foreign networks are modelled at the
 frame level with a generic managed flood; see SIMULATOR.md.

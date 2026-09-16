@@ -69,7 +69,8 @@ LoRa modem. Options, all supported by `ScanSchedule` / `RadioSlot`:
 | setup | pros | cons |
 |---|---|---|
 | **dedicated radio per protocol** (multi-radio gateway) | hears everything all the time; no native loss | hardware cost; RF isolation between radios |
-| **time sharing on one radio** | cheap | misses frames sent while tuned elsewhere (a 60/20/20 schedule misses ~40 % of foreign traffic and 40 % of native); native ZRP timers tolerate it but latency rises |
+| **time sharing on one radio** | cheap | misses frames sent while tuned elsewhere (a 50/25/25 schedule missed 1 740 frames and bridged 24 of 49 foreign messages in the simulator); native ZRP timers tolerate it but latency rises. **Not recommended**: dwelling seconds per profile loses about the fraction of time spent elsewhere, however short or long the dwell |
+| **CAD sniffing on one radio** (`Sx126x::sniff`) | cheap; catches frames on every profile | the radio sweeps every profile with a 4-symbol CAD (30-60 ms each) and locks onto the one showing a preamble; MeshCore/Meshtastic preambles last 130-500 ms, so nothing is missed except frames overlapping another reception (simulator: 39 of 47 bridged, 33 misses). Cannot transmit while sweeping; needs a modem with fast CAD (SX126x) |
 | **scan mode** | discovers which networks exist nearby | not for steady operation |
 | **cached network profiles** | after a scan, only dwell on profiles that showed traffic | needs periodic rescans to notice new networks |
 | **compatibility radio** | one radio native, one time-shared among foreign profiles | best of both for a gateway |
