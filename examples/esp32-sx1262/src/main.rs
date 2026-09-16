@@ -14,6 +14,8 @@ extern crate alloc;
 mod console;
 #[path = "../../common/ui.rs"]
 mod ui;
+#[path = "../../common/compat.rs"]
+mod compat;
 
 use alloc::vec::Vec;
 
@@ -135,6 +137,8 @@ fn main() -> ! {
     let mut rx_buf = [0u8; 255];
     let mut uart_buf = [0u8; 64];
     let mut lbt_rng = rng_from_seed(rng_seed);
+    let mut compat = compat::Compat::new(&seed, "MeshStar-A");
+    let mut compat_last_periodic = 0u64;
 
     // Gateway sniffing (compat mode): sweep the foreign profiles with CAD
     // between native receive polls and lock onto whatever shows a preamble.
@@ -162,7 +166,15 @@ fn main() -> ! {
         match radio.receive(&mut rx_buf) {
             Ok(Some((n, mut meta))) => {
                 meta.timestamp_ms = now;
-                node.on_radio_rx(&rx_buf[..n], meta);
+                if let Some(mode) = compat.mode {
+                    let mut r = [0u8; 32];
+                    lbt_rng.fill_bytes(&mut r);
+                    let line = compat.on_rx(&rx_buf[..n], &meta, now, r);
+                    println!("[compat {}] rx {} B rssi {} snr {:.1}: {}", mode, n, meta.rssi_dbm, meta.snr_db, line);
+                    println!("[compat raw] {:02x?}", &rx_buf[..n.min(64)]);
+                } else {
+                    node.on_radio_rx(&rx_buf[..n], meta);
+                }
             }
             Ok(None) => {}
             Err(e) => log::debug!("rx error {:?}", e),
@@ -196,12 +208,64 @@ fn main() -> ! {
                 other => log::debug!("{:?}", other),
             }
         }
-        // Console.
+        // Compat periodic frames (adverts) every 10 minutes.
+        if let Some(mode) = compat.mode {
+            if now.saturating_sub(compat_last_periodic) > 600_000 {
+                compat_last_periodic = now;
+                let mut r = [0u8; 32];
+                lbt_rng.fill_bytes(&mut r);
+                for f in compat.periodic(mode, now, r) {
+                    let _ = radio.transmit(&f);
+                    let _ = radio.start_receive();
+                    println!("[compat {}] advert sent ({} B)", mode, f.len());
+                }
+            }
+        }
+        // Console (compat commands are handled here, the rest by the shared console).
         if let Ok(n) = uart.read_buffered_bytes(&mut uart_buf) {
             if n > 0 {
-                let stats = radio.stats();
-                let mut out = Writer(&mut uart);
-                console.feed(&uart_buf[..n], &mut node, stats, &mut out);
+                let text = core::str::from_utf8(&uart_buf[..n]).unwrap_or("").trim();
+                let mut handled = false;
+                if let Some(arg) = text.strip_prefix("compat ") {
+                    handled = true;
+                    let mode = match arg.trim() {
+                        "meshcore" => Some(meshstar_protocols::model::ProtocolId::MeshCore),
+                        "meshtastic" => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
+                        _ => None,
+                    };
+                    compat.mode = mode;
+                    let p = mode.map(compat::Compat::profile).unwrap_or(profile);
+                    match radio.configure(&p).and_then(|_| radio.start_receive()) {
+                        Ok(()) => println!("compat {:?}: radio {}", mode, p),
+                        Err(e) => println!("radio error {:?}", e),
+                    }
+                    compat_last_periodic = 0;
+                } else if let Some(msg) = text.strip_prefix("csend ") {
+                    handled = true;
+                    match compat.mode {
+                        Some(mode) => {
+                            let mut r = [0u8; 32];
+                            lbt_rng.fill_bytes(&mut r);
+                            match compat.encode_text(mode, msg.trim(), now, r) {
+                                Ok(f) => {
+                                    let res = radio.transmit(&f);
+                                    let _ = radio.start_receive();
+                                    println!("[compat {}] sent {} B: {:?}", mode, f.len(), res);
+                                }
+                                Err(e) => println!("encode error {}", e),
+                            }
+                        }
+                        None => println!("compat mode off"),
+                    }
+                } else if text == "advert" {
+                    handled = true;
+                    compat_last_periodic = 0;
+                }
+                if !handled {
+                    let stats = radio.stats();
+                    let mut out = Writer(&mut uart);
+                    console.feed(&uart_buf[..n], &mut node, stats, &mut out);
+                }
             }
         }
         // UI: button cycles pages; redraw at 2 Hz.

@@ -8,6 +8,7 @@ description = "MeshStar node firmware for Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1
 [dependencies]
 meshstar-core = { path = "../../crates/meshstar-core", default-features = false }
 meshstar-radio-sx126x = { path = "../../crates/meshstar-radio-sx126x" }
+meshstar-protocols = { path = "../../crates/meshstar-protocols", default-features = false, features = ["meshcore", "meshtastic"] }
 esp-hal = { version = "0.23", features = ["esp32s3", "unstable"] }
 esp-backtrace = { version = "0.15", features = ["esp32s3", "panic-handler", "exception-handler", "println"] }
 esp-println = { version = "0.13", features = ["esp32s3", "log"] }

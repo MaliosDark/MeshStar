@@ -43,8 +43,26 @@ marked `UNVERIFIED`, and what is not implemented. Summary:
 | not implemented | develop-branch AEAD channels, XEdDSA, compressed text, Admin/Traceroute, MQTT, Store&Forward module, 2.4 GHz | transport codes generation, PATH return learning, ANON_REQ login, MULTIPART, room-server sync |
 | test vectors | two AES-CTR frames from the notes reproduced byte for byte | header/MAC/ACK recipes from the notes |
 
-The vectors were derived from source code, not captured from devices.
-**Validate once against real hardware before relying on interop in the field.**
+**Validated on hardware (2026-09-16)** against a Heltec V3 running the
+official MeshCore companion firmware v1.17.1 (USB variant, driven from the
+PC with the `meshcore` Python library):
+
+* the node reports 869.618 MHz / 62.5 kHz / SF8 / CR 4/8 and the `Public`
+  channel with secret `8b3387e9…cd72` and hash `0x11`: exactly the adapter's
+  `eu_uk_sf8` profile and `public_channel()`;
+* a MeshStar board in compat mode decoded its flooded ADVERT (Ed25519
+  signature verified, detection score 95-100), a copy of that advert relayed
+  by a third-party MeshCore repeater in range (path `[ab]`), and a `Public`
+  channel text (MAC verified, decrypted correctly);
+* a `Public` channel text encoded by the adapter and transmitted by the
+  MeshStar board was received and displayed by the MeshCore node
+  (`MeshStar-A: hola Chiripa, soy MeshStar #1`), and was re-flooded by the
+  same repeater.
+
+Meshtastic is still verified from source only (no device at hand). The
+compat firmware has no real-time clock yet: foreign timestamps are
+synthesised from uptime (`1700000000 + uptime`), so MeshCore shows 2023
+dates for MeshStar messages until an RTC/time sync exists.
 
 ## Detection
 
