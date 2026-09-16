@@ -201,21 +201,39 @@ impl Gateway {
             rssi_dbm: meta.rssi_dbm.into(),
             bridged_to: Vec::new(),
         };
-        let mut out = Vec::new();
-        if self.mode == GatewayMode::Bridge {
-            let targets: Vec<ProtocolId> = self.detector.adapters.iter().map(|a| a.id()).filter(|p| *p != msg.protocol).collect();
-            for to in targets {
-                if let Some(f) = self.bridge_one(&msg, to, ctx) {
-                    record.bridged_to.push(to);
-                    out.push(f);
-                }
-            }
-        }
+        let out = self.bridge_all(&msg, ctx);
+        record.bridged_to = out.iter().map(|f| f.protocol).collect();
         if self.cache.len() >= self.cache_cap {
             self.cache.remove(0);
         }
         self.cache.push(record);
         (det, Some(msg), out)
+    }
+
+    /// Translate `msg` for every other protocol (bridge mode only).
+    fn bridge_all(&mut self, msg: &UnifiedMessage, ctx: &ProtocolContext) -> Vec<OutboundFrame> {
+        let mut out = Vec::new();
+        if self.mode != GatewayMode::Bridge {
+            return out;
+        }
+        let targets: Vec<ProtocolId> = self.detector.adapters.iter().map(|a| a.id()).filter(|p| *p != msg.protocol).collect();
+        for to in targets {
+            if let Some(f) = self.bridge_one(msg, to, ctx) {
+                out.push(f);
+            }
+        }
+        out
+    }
+
+    /// Bridge a message that was decoded elsewhere (e.g. a native MeshStar
+    /// broadcast delivered by the node's own session layer): dedup, policy,
+    /// loop guard, translation, rate limit. Returns frames to transmit.
+    pub fn bridge_message(&mut self, msg: &UnifiedMessage, ctx: &ProtocolContext) -> Vec<OutboundFrame> {
+        if !self.dedup.observe(msg, ctx.now_ms) {
+            self.stats.duplicates += 1;
+            return Vec::new();
+        }
+        self.bridge_all(msg, ctx)
     }
 
     fn bridge_one(&mut self, msg: &UnifiedMessage, to: ProtocolId, ctx: &ProtocolContext) -> Option<OutboundFrame> {

@@ -549,12 +549,15 @@ dependencies = [
 name = "meshstar-sim"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "log",
  "meshstar-core",
+ "meshstar-protocols",
  "rand_chacha",
  "rand_core",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

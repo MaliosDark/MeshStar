@@ -122,3 +122,20 @@ next items in STATUS.md.
 ```
 benchmarks/run.sh            # ~25 min, writes benchmarks/out/*.txt and *.json
 ```
+
+## G. Interoperability: 30 MeshStar + 10 Meshtastic + 10 MeshCore nodes, two gateways
+
+Foreign nodes send 2 messages/min per ecosystem on their own modem
+profiles; MeshStar nodes broadcast 1/min; gateways bridge public text under
+the default policy (`meshstar sim interop`).
+
+| gateway radios | foreign msgs bridged into MeshStar | reach of MeshStar nodes | added latency | native broadcasts reaching foreign nodes | missed by schedule | gateway dup / rate-limited |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 (time shared 50/25/25) | 24 / 48 | 56 % | 2.3 s | 9 / 23 | 1 859 frames | 27 / 1 |
+| 2 (dedicated foreign radios) | 40 / 47 | 60 % | 1.3 s | 12 / 24 | 0 | 301 / 455 |
+
+A single time-shared radio hears about half of the foreign traffic (it is
+tuned elsewhere the rest of the time) and adds a second of latency;
+dedicated radios bridge 85 % and the gateway rate limiter (6/min, burst 3)
+becomes the bottleneck, by design. Foreign networks are modelled at the
+frame level with a generic managed flood; see SIMULATOR.md.

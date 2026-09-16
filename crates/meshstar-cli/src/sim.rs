@@ -142,6 +142,30 @@ pub enum SimCmd {
     },
     /// Run a scenario from a JSON file
     FromJson { file: String },
+    /// Mixed ecosystems: MeshStar nodes plus Meshtastic / MeshCore nodes and gateways
+    Interop {
+        #[command(flatten)]
+        common: Common,
+        #[arg(long, default_value_t = 10)]
+        meshtastic: usize,
+        #[arg(long, default_value_t = 10)]
+        meshcore: usize,
+        /// Comma separated MeshStar node indices acting as gateways
+        #[arg(long, default_value = "0")]
+        gateways: String,
+        /// 1 = single time-shared radio, 2 = dedicated foreign radios
+        #[arg(long, default_value_t = 1)]
+        radios: usize,
+        #[arg(long, default_value_t = 50)]
+        native_share: u8,
+        /// Foreign messages per minute per ecosystem
+        #[arg(long, default_value_t = 2.0)]
+        foreign_rate: f32,
+        #[arg(long, default_value_t = 1.0)]
+        native_broadcast_rate: f32,
+        #[arg(long)]
+        no_bridge: bool,
+    },
 }
 
 fn strategies(s: &str) -> Vec<Strategy> {
@@ -214,6 +238,18 @@ pub fn run(cmd: SimCmd) {
         }
         SimCmd::Template { common } => {
             println!("{}", serde_json::to_string_pretty(&common.scenario(Strategy::Zrp)).unwrap());
+        }
+        SimCmd::Interop { common, meshtastic, meshcore, gateways, radios, native_share, foreign_rate, native_broadcast_rate, no_bridge } => {
+            let mut w = World::new(common.scenario(Strategy::Zrp));
+            let gws: Vec<usize> = gateways.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            w.with_interop(meshstar_sim::InteropParams { meshtastic_nodes: meshtastic, meshcore_nodes: meshcore, gateways: gws, gateway_radios: radios, native_share_percent: native_share, foreign_rate_per_minute: foreign_rate, native_broadcast_rate_per_minute: native_broadcast_rate, foreign_hop_cap: 3, bridge_enabled: !no_bridge });
+            w.run();
+            let im = &w.interop.as_ref().unwrap().metrics;
+            println!("MeshStar side\n{}", single(&w.metrics));
+            println!("Interop\n{}", serde_json::to_string_pretty(im).unwrap());
+            if let Some(p) = &common.json {
+                std::fs::write(p, serde_json::to_string_pretty(&serde_json::json!({"native": w.metrics, "interop": im})).unwrap()).expect("write json");
+            }
         }
         SimCmd::FromJson { file } => {
             let s: Scenario = serde_json::from_str(&std::fs::read_to_string(&file).expect("read")).expect("scenario json");

@@ -26,4 +26,10 @@ for z in 1 2 3; do
   echo "-- zone radius $z"
   $M sim run --nodes 100 --pattern local --rate 2 --zone-radius $z --duration 1800 --json "$OUT/zone_$z.json" | tee "$OUT/zone_$z.txt"
 done
+
+echo "== G. interoperability: 30 MeshStar + 10 Meshtastic + 10 MeshCore, two gateways"
+for r in 1 2; do
+  echo "-- gateway radios: $r"
+  $M sim interop --nodes 30 --meshtastic 10 --meshcore 10 --gateways 0,15 --radios $r --duration 1800 --json "$OUT/interop_r$r.json" | tee "$OUT/interop_r$r.txt"
+done
 echo "done -> $OUT"

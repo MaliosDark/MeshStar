@@ -15,6 +15,7 @@
 //!   overhead, airtime, duplicates, route convergence, energy estimate.
 //! * [`World`] - the discrete time loop tying it together.
 
+pub mod interop;
 pub mod link;
 pub mod metrics;
 pub mod report;
@@ -24,12 +25,13 @@ pub mod traffic;
 use std::collections::BTreeMap;
 
 use meshstar_core::identity::{Address, Identity};
-use meshstar_core::node::{Node, NodeConfig, NodeEvent, RoutingMode};
+use meshstar_core::node::{Node, NodeConfig, NodeEvent, Protection, RoutingMode};
 use meshstar_core::platform::rng_from_seed;
 use meshstar_core::protocol::{Reliability, Role};
 use meshstar_core::radio::{LoRaProfile, RxMeta};
 use rand_core::RngCore;
 
+pub use interop::{ForeignKind, InteropMetrics, InteropParams, InteropState};
 pub use link::{LinkModel, LinkParams};
 pub use metrics::{Metrics, NodeEnergy};
 pub use topology::{MobilityParams, OutageParams, Topology, TopologyParams};
@@ -205,6 +207,14 @@ pub struct World {
     pub trace: Vec<(u64, usize, usize, String, u16, &'static str)>,
     /// Packet ids parallel to `trace` (same index).
     pub trace_ids: Vec<(u32, u8, u8)>,
+    /// Interop extension (foreign nodes, gateways), if enabled.
+    pub interop: Option<InteropState>,
+    /// Native broadcasts received by gateway nodes, waiting to be bridged.
+    pub(crate) native_broadcast_inbox: BTreeMap<usize, Vec<(Vec<u8>, Address)>>,
+    /// text -> (foreign message id, origin time) for bridged-in broadcasts.
+    pub(crate) bridged_in_ids: BTreeMap<String, (u32, u64)>,
+    /// (text, node) bridged-in broadcasts received this step.
+    pub(crate) bridged_in_received: Vec<(String, usize)>,
 }
 
 impl World {
@@ -257,7 +267,7 @@ impl World {
         traffic.local_radius_m = link.range_with_margin_m(LinkModel::GOOD_MARGIN_DB) * scenario.traffic.local_hops as f32;
         traffic.leaves = nodes.iter().enumerate().filter(|(_, n)| n.role == Role::Leaf).map(|(i, _)| i).collect();
         traffic.always_on = nodes.iter().enumerate().filter(|(_, n)| n.role != Role::Leaf).map(|(i, _)| i).collect();
-        let mut w = Self { step_ms: scenario.step_ms.max(1), scenario, nodes, now: 0, link, metrics: Metrics::default(), traffic, index, rng, last_reach_update: 0, log: Vec::new(), keep_log: false, trace: Vec::new(), trace_ids: Vec::new() };
+        let mut w = Self { step_ms: scenario.step_ms.max(1), scenario, nodes, now: 0, link, metrics: Metrics::default(), traffic, index, rng, last_reach_update: 0, log: Vec::new(), keep_log: false, trace: Vec::new(), trace_ids: Vec::new(), interop: None, native_broadcast_inbox: BTreeMap::new(), bridged_in_ids: BTreeMap::new(), bridged_in_received: Vec::new() };
         w.update_reach();
         w
     }
@@ -347,7 +357,13 @@ impl World {
             let n = &mut self.nodes[j];
             let airtime = r.end - r.start;
             let outcome;
-            if !n.online || !n.node.is_awake() {
+            let tuned_away = self.interop.as_ref().map(|st| st.gateways.iter().enumerate().any(|(g, gw)| gw.node == j && !st.gateway_native_listening(g, now))).unwrap_or(false);
+            if tuned_away {
+                outcome = "tuned-away";
+                if let Some(st) = self.interop.as_mut() {
+                    st.metrics.missed_by_schedule += 1;
+                }
+            } else if !n.online || !n.node.is_awake() {
                 outcome = "asleep";
             } else {
                 n.energy.rx_ms += airtime;
@@ -453,6 +469,10 @@ impl World {
                 n.energy.sleep_ms += step;
             }
         }
+
+        if self.interop.is_some() {
+            self.step_interop(step);
+        }
     }
 
     fn inject(&mut self, req: traffic::SendRequest) {
@@ -476,9 +496,20 @@ impl World {
     fn handle_event(&mut self, i: usize, e: &NodeEvent) {
         let now = self.now;
         match e {
-            NodeEvent::MessageReceived { from, hops, .. } => {
+            NodeEvent::MessageReceived { from, hops, payload, protection, .. } => {
                 if let Some(&src) = self.index.get(from) {
                     self.metrics.on_received(now, src, i, *hops);
+                }
+                if self.interop.is_some() && matches!(protection, crate::Protection::Plaintext | crate::Protection::Group) {
+                    let is_gateway = self.interop.as_ref().map(|st| st.gateways.iter().any(|g| g.node == i)).unwrap_or(false);
+                    if is_gateway {
+                        self.native_broadcast_inbox.entry(i).or_default().push((payload.clone(), *from));
+                    }
+                    if let Ok(t) = std::str::from_utf8(payload) {
+                        if self.bridged_in_ids.contains_key(t) {
+                            self.bridged_in_received.push((t.to_string(), i));
+                        }
+                    }
                 }
             }
             NodeEvent::Delivered { handle, .. } => self.metrics.on_delivered(now, i, *handle),
@@ -590,6 +621,7 @@ impl World {
         let energies: Vec<(Role, NodeEnergy)> = self.nodes.iter().map(|n| (n.role, n.energy)).collect();
         self.metrics.energy_summary(&energies);
         self.metrics.finalize(now);
+        self.finish_interop();
     }
 
     pub fn node_by_address(&self, a: &Address) -> Option<&SimNode> {
