@@ -675,7 +675,7 @@ impl RadioProtocol for MeshCoreAdapter {
                 }
             }
             PayloadType::GrpTxt | PayloadType::GrpData => {
-                if n < 3 + 2 + 16 || (n - 3) % 16 != 0 {
+                if n < 1 + 2 + 16 || (n - 3) % 16 != 0 {
                     s.reject("group payload length not hash + MAC + 16n");
                     return s;
                 }
@@ -702,7 +702,7 @@ impl RadioProtocol for MeshCoreAdapter {
                 }
             }
             PayloadType::TxtMsg | PayloadType::Req | PayloadType::Response | PayloadType::Path => {
-                if n < 4 + 2 + 16 || (n - 4) % 16 != 0 {
+                if n < 2 + 2 + 16 || (n - 4) % 16 != 0 {
                     s.reject("datagram length not hashes + MAC + 16n");
                     return s;
                 }

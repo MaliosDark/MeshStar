@@ -1,10 +1,24 @@
 [package]
 name = "meshstar-cli"
+description = "meshstar: diagnostics, identity, packet tools, simulator and interoperability commands"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "meshstar"
+path = "src/main.rs"
+
 [dependencies]
-meshstar-core = { path = "../meshstar-core", default-features = false }
+meshstar-core = { path = "../meshstar-core" }
+meshstar-sim = { path = "../meshstar-sim" }
+meshstar-protocols = { path = "../meshstar-protocols" }
+clap = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true }
+hex = { workspace = true, features = ["std"] }
+log = { workspace = true }
+env_logger = "0.11"
+rand_core = { workspace = true }
