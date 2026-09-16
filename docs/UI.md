@@ -34,10 +34,19 @@ to the next screen; long press acts):
 |---|---|---|
 | Home | every node heard: MeshStar neighbours and zone members, Meshtastic and MeshCore nodes seen in compat mode; sorted by signal | node card (protocol, role, RSSI/hops, security label spelled out, last seen) |
 | Chats | last 8 messages, newest first, badge + sender + text + age, unread dot | message view: wrapped text, security label, RSSI/hops; marks it read |
-| Networks | one row per network: MeshStar zone, LongFast (M), Public (C): node count, bars, RSSI, plus the compat state | cycle compat: off > MeshCore > Meshtastic > off (retunes the radio) |
+| Networks | one row per network: MeshStar zone, LongFast (M), Public (C): node count, bars, RSSI, plus the compat state | cycle compat: off > MeshCore > Meshtastic > scan (all three, see INTEROP.md) > off |
 | Signal | big RSSI, bars, SNR, rx/tx/crc/airtime, sparkline of the last 54 frames | - |
 | Node | name, role, id, zone size, battery (mV and %), uptime | - |
 | Settings | Compat, Advert now, Screen off, Role (read-only), Reboot | act on the row |
+
+A message that arrives (from any network) pops up Meshtastic-style for
+30 s or until a press: inverted title bar with the protocol badge, sender,
+channel and age, the text wrapped below, security label and RSSI/hops at
+the bottom. The splash is the MeshStar logo (`assets/meshstar-logo.png`,
+rendered to `examples/common/logo.rs` by `tools/logo_to_rs.py`), followed
+by name, id and version. The white LED (GPIO35) is on during the splash,
+then gives a short heartbeat every 3 s, a 400 ms flash on every message
+and a blip on every transmission.
 
 Security labels: `E2E` (Noise XX session) and `ENV`/`DM` with a closed
 lock; `GRP`, `CH` (foreign shared channel), `BR` (bridged) and `?`

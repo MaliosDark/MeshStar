@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(regs[&reg::MODEM_CONFIG1], (7 << 4) | (1 << 1)); // BW125, CR4/5, explicit
         assert_eq!(regs[&reg::MODEM_CONFIG2], (8 << 4) | 0x04); // SF8, CRC on
         assert_eq!(regs[&reg::SYNC_WORD], 0x1A);
-        assert_eq!(regs[&reg::PREAMBLE_LSB], 12);
+        assert_eq!(regs[&reg::PREAMBLE_LSB], 32);
         assert_eq!(regs[&reg::PA_CONFIG] & 0x80, 0x80); // PA_BOOST
         // wrong version -> init fails
         let bad = Rc::new(RefCell::new(Chip::default()));

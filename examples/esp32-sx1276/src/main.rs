@@ -132,11 +132,15 @@ fn main() -> ! {
     };
     let mut model = ui::UiModel::new(&node.config().name, node.address(), node.role());
     if have_oled {
-        ui::splash(&mut oled, &model.name, &model.short_id, concat!("v", env!("CARGO_PKG_VERSION"), " ZRP+Noise XX"));
+        ui::splash(&mut oled);
     }
+    let mut boot_info_shown = false;
     let mut ui = ui::Ui::new();
     let button = Input::new(peripherals.GPIO0, Pull::Up);
     let mut btn = ui::Button::new();
+    let mut led = Output::new(peripherals.GPIO25, Level::High);
+    let mut led_until = 0u64;
+    let mut led_beat = 0u64;
     let mut last_render = 0u64;
     let boot_ms = now_ms();
 
@@ -166,9 +170,11 @@ fn main() -> ! {
                 delay.delay_millis(5 + (lbt_rng.next_u32() % 25));
                 tries += 1;
             }
+            led.set_high();
             if let Err(e) = radio.transmit(&tx.frame) {
                 log::warn!("tx error {:?}", e);
             }
+            led.set_low();
             let _ = radio.start_receive();
         }
         // Events.
@@ -178,6 +184,7 @@ fn main() -> ! {
                     let text = core::str::from_utf8(&payload).unwrap_or("<binary>");
                     println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB): {}", from, protection, hops, rssi_dbm, snr_db, text);
                     model.push_native(from, text, protection, rssi_dbm, hops, now);
+                    led_until = now + 400;
                 }
                 NodeEvent::Delivered { handle, to, rtt_ms } => println!("[ack] #{} to {} in {} ms", handle, to, rtt_ms),
                 NodeEvent::Stored { handle, anchor } => println!("[stored] #{} at {}", handle, anchor),
@@ -220,7 +227,29 @@ fn main() -> ! {
             let stats = radio.stats();
             model.sample_signal(&stats);
             model.sync_native(&node, now);
-            ui.render(&mut oled, &model, &stats, (now - boot_ms) / 1000, now);
+            if now.saturating_sub(boot_ms) < 2500 {
+                // Logo splash stays up.
+            } else if now.saturating_sub(boot_ms) < 4500 {
+                if !boot_info_shown {
+                    boot_info_shown = true;
+                    ui::boot_info(&mut oled, &model.name, &model.short_id, concat!("v", env!("CARGO_PKG_VERSION"), " ZRP+Noise XX"));
+                }
+            } else {
+                ui.render(&mut oled, &model, &stats, (now - boot_ms) / 1000, now);
+            }
+        }
+        // White LED: on during the splash, then a short heartbeat every 3 s,
+        // a longer flash on every message and a blip on every transmission.
+        if now.saturating_sub(boot_ms) < 2500 {
+            led_until = now + 1;
+        } else if now.saturating_sub(led_beat) >= 3000 {
+            led_beat = now;
+            led_until = led_until.max(now + 30);
+        }
+        led.set_level(if now < led_until { Level::High } else { Level::Low });
+        if have_oled && oled.is_dirty() {
+            // Two pages (~6 ms) per iteration keeps the radio polled during redraws.
+            let _ = oled.flush_pages(2);
         }
         // Sleep until something is due (light sleep is left to the board integrator).
         let wake = node.next_wakeup();

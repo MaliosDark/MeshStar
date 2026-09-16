@@ -140,11 +140,15 @@ fn main() -> ! {
     };
     let mut model = ui::UiModel::new(&node.config().name, node.address(), node.role());
     if have_oled {
-        ui::splash(&mut oled, &model.name, &model.short_id, concat!("v", env!("CARGO_PKG_VERSION"), " ZRP+Noise XX"));
+        ui::splash(&mut oled);
     }
+    let mut boot_info_shown = false;
     let mut ui = ui::Ui::new();
     let button = Input::new(peripherals.GPIO0, Pull::Up);
     let mut btn = ui::Button::new();
+    let mut led = Output::new(peripherals.GPIO35, Level::High);
+    let mut led_until = 0u64;
+    let mut led_beat = 0u64;
     let mut last_render = 0u64;
     let boot_ms = now_ms();
     // Battery: VBAT/4.9 on GPIO1 while ADC_CTRL (GPIO37) is low. The 390k
@@ -166,26 +170,156 @@ fn main() -> ! {
     let mut compat = compat::Compat::new(&seed, "MeshStar-A");
     let mut compat_last_periodic = 0u64;
 
-    // Gateway sniffing (compat mode): sweep the foreign profiles with CAD
-    // between native receive polls and lock onto whatever shows a preamble.
-    // Enable by setting SNIFF to true; the frames then go through the
-    // adapter layer (meshstar-protocols) instead of the native node.
-    const SNIFF: bool = false;
-    let sniff_profiles = [
-        profile,
-        LoRaProfile { frequency_hz: 869_618_000, bandwidth_hz: 62_500, spreading_factor: 8, coding_rate: 8, sync_word: 0x12, preamble_symbols: 32, ..profile },
-        LoRaProfile { frequency_hz: 869_618_000, bandwidth_hz: 62_500, spreading_factor: 9, coding_rate: 8, sync_word: 0x12, preamble_symbols: 16, ..profile },
+    // Scan mode (`compat scan`): the radio stays on the MeshStar profile and
+    // every SCAN_PERIOD_MS sweeps the foreign profiles with a short CAD
+    // (2 symbols / ~16 ms for Meshtastic SF11, 4 symbols / ~16 ms for
+    // MeshCore SF8: measured false-positive rates at idle 0-3 % and 0-1 %).
+    // Foreign preambles last 130 ms or more, so every frame is probed inside
+    // its preamble. On a hit the radio locks to the profiles in turn (a
+    // Meshtastic frame also trips the MeshCore probe, the channels overlap),
+    // waits ~5 symbols for a preamble, then for the frame, and returns. The
+    // sweep costs ~32 ms of native listening per period; the MeshStar
+    // profile's 32-symbol preamble (66 ms) is what keeps native frames
+    // receivable across a sweep. A native frame already being received
+    // (preamble or header seen) is never interrupted.
+    const SCAN_PERIOD_MS: u64 = 50;
+    // Meshtastic first: its SF11 probe is the more selective one, and a
+    // Meshtastic frame also trips the MeshCore probe (the channels overlap).
+    let foreign = [
+        (meshstar_protocols::model::ProtocolId::Meshtastic, compat::Compat::profile(meshstar_protocols::model::ProtocolId::Meshtastic)),
+        (meshstar_protocols::model::ProtocolId::MeshCore, compat::Compat::profile(meshstar_protocols::model::ProtocolId::MeshCore)),
     ];
-    let mut last_sniff = 0u64;
+    let mut scan = false;
+    let mut last_scan = 0u64;
+    let mut scan_probes = 0u32;
+    let mut scan_hits = 0u32;
+    let mut scan_frames = 0u32;
+    let mut native_active_since = 0u64;
 
     loop {
         let now = now_ms();
-        if SNIFF && now.saturating_sub(last_sniff) > 50 && node.tx_queue_len() == 0 {
-            last_sniff = now;
-            match radio.sniff(&sniff_profiles, 0) {
-                Ok(Some(i)) if i > 0 => log::info!("preamble on foreign profile {}", i),
-                Err(e) => log::warn!("sniff error {:?}", e),
-                _ => {}
+        if scan && compat.mode.is_none() && now.saturating_sub(last_scan) >= SCAN_PERIOD_MS && node.tx_queue_len() == 0 {
+            // A native frame in progress is never interrupted: from the preamble
+            // detection until the header should have arrived, and from a valid
+            // header until the end of the longest frame (bounded, because the
+            // modem reports the odd false preamble).
+            let native_busy = if radio.rx_active() {
+                if native_active_since == 0 {
+                    native_active_since = now;
+                }
+                now.saturating_sub(native_active_since) < profile.airtime_ms(255) as u64 + 50
+            } else if radio.preamble_seen() {
+                if native_active_since == 0 {
+                    native_active_since = now;
+                }
+                let header_by = (profile.preamble_symbols as u64 + 12) * profile.symbol_time_us() as u64 / 1000 + 20;
+                if now.saturating_sub(native_active_since) < header_by {
+                    true
+                } else {
+                    radio.clear_preamble_seen();
+                    native_active_since = 0;
+                    false
+                }
+            } else {
+                native_active_since = 0;
+                false
+            };
+            if !native_busy {
+                last_scan = now;
+                let mut hit = None;
+                for (i, (_, fp)) in foreign.iter().enumerate() {
+                    scan_probes += 1;
+                    // SF11 probes use 2 symbols to keep the sweep short (a second
+                    // confirming CAD right after a hit never fires on the SX1262, so
+                    // false hits are filtered by the short lock-on below instead).
+                    let symbols = if fp.spreading_factor >= 10 { 2 } else { 4 };
+                    match radio.cad_probe_symbols(fp, symbols) {
+                        Ok(true) => {
+                            hit = Some(i);
+                            break;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            log::warn!("scan probe error {:?}", e);
+                            break;
+                        }
+                    }
+                }
+                if let Some(first) = hit {
+                    scan_hits += 1;
+                    let t0 = now_ms();
+                    let mut got = None;
+                    let mut tried: heapless::Vec<(&str, bool, u64), 2> = heapless::Vec::new();
+                    // Try the profile that tripped first, then the other one.
+                    for k in 0..foreign.len() {
+                        let (pid, fp) = foreign[(first + k) % foreign.len()];
+                        if radio.retune(&fp).is_err() {
+                            break;
+                        }
+                        let t1 = now_ms();
+                        // The modem reports a preamble ~4.5 symbols after entering
+                        // receive (measured on SX1262); keep the window short so the
+                        // other profile still gets its turn inside the preamble.
+                        let head_ms = 5 * fp.symbol_time_us() as u64 / 1000 + 8;
+                        // A preamble must be followed by a header within a preamble
+                        // length (we may have joined at its start); a frame by the
+                        // longest airtime.
+                        let header_by = (fp.preamble_symbols as u64 + 12) * fp.symbol_time_us() as u64 / 1000 + 30;
+                        let max_ms = fp.airtime_ms(255) as u64 + 100;
+                        let mut started = false;
+                        let mut started_at = 0u64;
+                        loop {
+                            let t = now_ms();
+                            match radio.receive(&mut rx_buf) {
+                                Ok(Some((n, mut meta))) => {
+                                    meta.timestamp_ms = t;
+                                    got = Some((pid, n, meta));
+                                    break;
+                                }
+                                Ok(None) => {}
+                                Err(_) => break,
+                            }
+                            if !started {
+                                started = radio.preamble_seen();
+                                if started {
+                                    started_at = t.saturating_sub(t1);
+                                }
+                                if !started && t.saturating_sub(t1) > head_ms {
+                                    break;
+                                }
+                            }
+                            if t.saturating_sub(t1) > max_ms || (!radio.rx_active() && t.saturating_sub(t1) > header_by) {
+                                break;
+                            }
+                            delay.delay_millis(1);
+                        }
+                        let _ = tried.push((pid.name(), started, if started { started_at } else { now_ms().saturating_sub(t1) }));
+                        if got.is_some() || started {
+                            break;
+                        }
+                    }
+                    match got {
+                        Some((pid, n, meta)) => {
+                            scan_frames += 1;
+                            let mut r = [0u8; 32];
+                            lbt_rng.fill_bytes(&mut r);
+                            let t = now_ms();
+                            let (line, msg) = compat.on_rx(&rx_buf[..n], &meta, t, r);
+                            println!("[scan {}] rx {} B rssi {} snr {:.1} after {} ms {:?}: {}", pid, n, meta.rssi_dbm, meta.snr_db, t.saturating_sub(t0), tried, line);
+                            if let Some(m) = msg {
+                                if m.content_type == meshstar_protocols::model::ContentType::Text {
+                                    led_until = t + 400;
+                                }
+                                model.observe_foreign(&m, meta.rssi_dbm, t);
+                            }
+                        }
+                        None => log::debug!("scan: CAD hit on {} without a frame ({} ms, tried {:?})", foreign[first].0, now_ms().saturating_sub(t0), tried),
+                    }
+                }
+                if let Err(e) = radio.retune(&profile) {
+                    log::warn!("retune error {:?}", e);
+                    let _ = radio.configure(&profile).and_then(|_| radio.start_receive());
+                }
             }
         }
         // Radio receive.
@@ -198,6 +332,9 @@ fn main() -> ! {
                     let (line, msg) = compat.on_rx(&rx_buf[..n], &meta, now, r);
                     println!("[compat {}] rx {} B rssi {} snr {:.1}: {}", mode, n, meta.rssi_dbm, meta.snr_db, line);
                     if let Some(m) = msg {
+                        if m.content_type == meshstar_protocols::model::ContentType::Text {
+                            led_until = now + 400;
+                        }
                         model.observe_foreign(&m, meta.rssi_dbm, now);
                     }
                     println!("[compat raw] {:02x?}", &rx_buf[..n.min(64)]);
@@ -216,9 +353,11 @@ fn main() -> ! {
                 delay.delay_millis(5 + (lbt_rng.next_u32() % 25));
                 tries += 1;
             }
+            led.set_high();
             if let Err(e) = radio.transmit(&tx.frame) {
                 log::warn!("tx error {:?}", e);
             }
+            led.set_low();
             let _ = radio.start_receive();
         }
         // Events.
@@ -228,6 +367,7 @@ fn main() -> ! {
                     let text = core::str::from_utf8(&payload).unwrap_or("<binary>");
                     println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB): {}", from, protection, hops, rssi_dbm, snr_db, text);
                     model.push_native(from, text, protection, rssi_dbm, hops, now);
+                    led_until = now + 400;
                 }
                 NodeEvent::Delivered { handle, to, rtt_ms } => println!("[ack] #{} to {} in {} ms", handle, to, rtt_ms),
                 NodeEvent::Stored { handle, anchor } => println!("[stored] #{} at {}", handle, anchor),
@@ -268,6 +408,10 @@ fn main() -> ! {
                                     "meshtastic" => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
                                     _ => None,
                                 };
+                                scan = arg.trim() == "scan";
+                                if scan {
+                                    println!("scan: MeshStar + CAD probes on MeshCore/Meshtastic every {} ms", SCAN_PERIOD_MS);
+                                }
                                 compat.mode = mode;
                                 let p = mode.map(compat::Compat::profile).unwrap_or(profile);
                                 match radio.configure(&p).and_then(|_| radio.start_receive()) {
@@ -293,9 +437,38 @@ fn main() -> ! {
                                 }
                             } else if text == "advert" {
                                 compat_last_periodic = 0;
+                            } else if text == "cadtest" {
+                                // False-positive rate of the CAD probes at idle.
+                                for (pid, fp) in foreign.iter() {
+                                    for sym in [1u8, 2, 4, 8] {
+                                        let mut hits = 0;
+                                        for _ in 0..100 {
+                                            if radio.cad_probe_symbols(fp, sym).unwrap_or(false) {
+                                                hits += 1;
+                                            }
+                                        }
+                                        println!("cadtest {} {} symbols: {}/100 hits", pid, sym, hits);
+                                    }
+                                }
+                                // Same, but from native receive mode like the scan loop does.
+                                for (pid, fp) in foreign.iter() {
+                                    for wait in [0u32, 2, 10] {
+                                        let mut hits = 0;
+                                        for _ in 0..50 {
+                                            let _ = radio.retune(&profile);
+                                            delay.delay_millis(wait);
+                                            if radio.cad_probe_symbols(fp, 2).unwrap_or(false) {
+                                                hits += 1;
+                                            }
+                                        }
+                                        println!("cadtest {} 2 symbols after RX (wait {} ms): {}/50 hits", pid, wait, hits);
+                                    }
+                                }
+                                let _ = radio.configure(&profile).and_then(|_| radio.start_receive());
                             } else if text == "ui" {
                                 // Dump what the screens show (for tests without eyes on the OLED).
-                                println!("ui: screen {:?} battery {:?} compat {:?}", ui.screen, model.battery_mv, model.compat);
+                                let st = radio.stats();
+                                println!("ui: screen {:?} battery {:?} compat {:?} scan {} (probes {} hits {} frames {}) radio preambles {} headers {} rx {}", ui.screen, model.battery_mv, model.compat, scan, scan_probes, scan_hits, scan_frames, st.preambles, st.headers, st.rx_frames);
                                 for n in model.nodes.iter() {
                                     println!("ui node: {:?} {} rssi {} {:?} hops {} sleeping {} anchor {}", n.proto, n.name, n.rssi, n.sec, n.hops, n.sleeping, n.anchor);
                                 }
@@ -336,10 +509,11 @@ fn main() -> ! {
                 match ui.press(press, &mut model) {
                     ui::Action::None => {}
                     ui::Action::CycleCompat => {
-                        compat.mode = match compat.mode {
-                            None => Some(meshstar_protocols::model::ProtocolId::MeshCore),
-                            Some(meshstar_protocols::model::ProtocolId::MeshCore) => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
-                            Some(_) => None,
+                        (compat.mode, scan) = match (compat.mode, scan) {
+                            (None, false) => (Some(meshstar_protocols::model::ProtocolId::MeshCore), false),
+                            (Some(meshstar_protocols::model::ProtocolId::MeshCore), _) => (Some(meshstar_protocols::model::ProtocolId::Meshtastic), false),
+                            (Some(_), _) => (None, true),
+                            (None, true) => (None, false),
                         };
                         let p = compat.mode.map(compat::Compat::profile).unwrap_or(profile);
                         match radio.configure(&p).and_then(|_| radio.start_receive()) {
@@ -378,12 +552,35 @@ fn main() -> ! {
             model.sample_signal(&stats);
             model.sync_native(&node, now);
             model.compat = compat.mode.map(ui::Proto::from_id);
-            ui.render(&mut oled, &model, &stats, (now - boot_ms) / 1000, now);
+            model.scan = scan;
+            if now.saturating_sub(boot_ms) < 2500 {
+                // Logo splash stays up.
+            } else if now.saturating_sub(boot_ms) < 4500 {
+                if !boot_info_shown {
+                    boot_info_shown = true;
+                    ui::boot_info(&mut oled, &model.name, &model.short_id, concat!("v", env!("CARGO_PKG_VERSION"), " ZRP+Noise XX"));
+                }
+            } else {
+                ui.render(&mut oled, &model, &stats, (now - boot_ms) / 1000, now);
+            }
+        }
+        // White LED: on during the splash, then a short heartbeat every 3 s,
+        // a longer flash on every message and a blip on every transmission.
+        if now.saturating_sub(boot_ms) < 2500 {
+            led_until = now + 1;
+        } else if now.saturating_sub(led_beat) >= 3000 {
+            led_beat = now;
+            led_until = led_until.max(now + 30);
+        }
+        led.set_level(if now < led_until { Level::High } else { Level::Low });
+        if have_oled && oled.is_dirty() {
+            // Two pages (~6 ms) per iteration keeps the radio polled during redraws.
+            let _ = oled.flush_pages(2);
         }
         // Sleep until something is due (light sleep is left to the board integrator).
         let wake = node.next_wakeup();
         let now = now_ms();
-        if wake > now + 5 {
+        if wake > now + 5 && !scan {
             delay.delay_millis(5);
         }
     }

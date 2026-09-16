@@ -33,13 +33,21 @@ impl LoRaProfile {
     /// 0.31 s here versus 0.57 s at SF9 4/6 or 1.0 s at SF11 250 kHz).
     /// Sync word 0x1A is private and distinct from Meshtastic (0x2B),
     /// MeshCore (0x12) and LoRaWAN (0x34).
+    ///
+    /// The 32 symbol preamble (66 ms at SF8/125 kHz) is deliberately long:
+    /// a single-radio gateway that time-shares with Meshtastic and MeshCore
+    /// spends ~30 ms per sweep probing the foreign profiles, and a MeshStar
+    /// frame must still have enough preamble left when the radio comes
+    /// back (the SX126x needs ~5 symbols to lock). Meshtastic uses 16
+    /// symbols at SF11 (131 ms) and MeshCore 32 at SF8/62.5 kHz for the
+    /// same reason. Costs ~41 ms per frame versus a 12 symbol preamble.
     pub const MESHSTAR_EU868: LoRaProfile = LoRaProfile {
         frequency_hz: 869_525_000,
         bandwidth_hz: 125_000,
         spreading_factor: 8,
         coding_rate: 5,
         sync_word: 0x1A,
-        preamble_symbols: 12,
+        preamble_symbols: 32,
         crc: true,
         implicit_header: false,
         tx_power_dbm: 14,
@@ -205,6 +213,10 @@ pub struct RadioStats {
     pub last_rssi_dbm: i16,
     pub last_snr_db: f32,
     pub cad_busy: u32,
+    /// Preamble detections reported by the modem (not every one ends in a frame).
+    pub preambles: u32,
+    /// Valid headers seen.
+    pub headers: u32,
 }
 
 #[cfg(test)]

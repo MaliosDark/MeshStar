@@ -15,6 +15,9 @@
 
 use core::fmt::Write;
 
+#[path = "logo.rs"]
+mod logo;
+
 use embedded_hal::i2c::I2c;
 use meshstar_core::identity::Address;
 use meshstar_core::node::{Node, Protection};
@@ -183,17 +186,33 @@ impl<I: I2c> Ssd1306<I> {
 
     /// Write dirty pages only.
     pub fn flush(&mut self) -> Result<(), I::Error> {
+        self.flush_pages(PAGES)
+    }
+
+    /// Write up to `max` dirty pages (about 3 ms each at 400 kHz), so a
+    /// firmware loop that must keep polling the radio can spread a redraw
+    /// over several iterations. Returns Ok when nothing is left dirty.
+    pub fn flush_pages(&mut self, max: usize) -> Result<(), I::Error> {
+        let mut n = 0;
         for p in 0..PAGES {
             if !self.dirty[p] {
                 continue;
+            }
+            if n >= max {
+                break;
             }
             self.cmd(&[0xB0 | p as u8, 0x00, 0x10])?;
             let mut chunk = [0x40u8; 1 + WIDTH];
             chunk[1..].copy_from_slice(&self.buf[p * WIDTH..(p + 1) * WIDTH]);
             self.i2c.write(self.addr, &chunk)?;
             self.dirty[p] = false;
+            n += 1;
         }
         Ok(())
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.iter().any(|d| *d)
     }
 
     #[inline]
@@ -313,6 +332,18 @@ impl<I: I2c> Ssd1306<I> {
             for c in 0..w {
                 if bits & (1 << (w - 1 - c)) != 0 {
                     self.pixel(x + c as i32, y + r as i32, on);
+                }
+            }
+        }
+    }
+
+    /// Row-major 1-bit bitmap, MSB first, rows padded to whole bytes.
+    pub fn bitmap(&mut self, x: i32, y: i32, w: usize, h: usize, data: &[u8]) {
+        let bpr = w.div_ceil(8);
+        for r in 0..h {
+            for c in 0..w {
+                if data.get(r * bpr + c / 8).map(|b| b & (0x80 >> (c % 8)) != 0).unwrap_or(false) {
+                    self.pixel(x + c as i32, y + r as i32, true);
                 }
             }
         }
@@ -527,6 +558,8 @@ pub struct UiModel {
     pub msgs: heapless::Vec<UiMsg, 8>,
     pub nets: heapless::Vec<UiNet, 4>,
     pub compat: Option<Proto>,
+    /// Native profile plus CAD probes of the foreign networks.
+    pub scan: bool,
     pub bridge: bool,
     pub battery_mv: Option<u32>,
     pub rssi_hist: [i16; 56],
@@ -535,6 +568,8 @@ pub struct UiModel {
     pub screen_on: bool,
     pub last_activity: u64,
     pub screen_timeout_s: u32,
+    /// Messages ever pushed (for the popup trigger).
+    pub total_msgs: u32,
 }
 
 impl UiModel {
@@ -544,7 +579,7 @@ impl UiModel {
         let _ = write!(short_id, "{:04X}.{:04X}", s >> 16, s & 0xFFFF);
         let mut nets = heapless::Vec::new();
         let _ = nets.push(UiNet { proto: Proto::Star, name: Name::try_from("MeshStar").unwrap_or_default(), nodes: 0, rssi: 0, frames: 0, last_seen: 0 });
-        Self { name: name.chars().take(12).collect(), short_id, role, nodes: heapless::Vec::new(), msgs: heapless::Vec::new(), nets, compat: None, bridge: false, battery_mv: None, rssi_hist: [0; 56], hist_len: 0, last_rx_frames: 0, screen_on: true, last_activity: 0, screen_timeout_s: 0 }
+        Self { name: name.chars().take(12).collect(), short_id, role, nodes: heapless::Vec::new(), msgs: heapless::Vec::new(), nets, compat: None, scan: false, bridge: false, battery_mv: None, rssi_hist: [0; 56], hist_len: 0, last_rx_frames: 0, screen_on: true, last_activity: 0, screen_timeout_s: 0, total_msgs: 0 }
     }
 
     pub fn unread(&self) -> usize {
@@ -682,6 +717,7 @@ impl UiModel {
             self.msgs.pop();
         }
         let _ = self.msgs.insert(0, m);
+        self.total_msgs = self.total_msgs.wrapping_add(1);
     }
 
     /// Record the RSSI of each new frame for the sparkline.
@@ -797,11 +833,14 @@ pub struct Ui {
     cursor: usize,
     detail: bool,
     frame: u32,
+    /// A message view opened automatically (Meshtastic style) and when it closes.
+    popup_until: Option<u64>,
+    seen_msgs: u32,
 }
 
 impl Ui {
     pub fn new() -> Self {
-        Self { screen: Screen::Home, cursor: 0, detail: false, frame: 0 }
+        Self { screen: Screen::Home, cursor: 0, detail: false, frame: 0, popup_until: None, seen_msgs: 0 }
     }
 
     fn items(&self, m: &UiModel) -> usize {
@@ -816,6 +855,14 @@ impl Ui {
 
     /// Feed a button press; returns the action the firmware must perform.
     pub fn press(&mut self, p: Press, m: &mut UiModel) -> Action {
+        if self.popup_until.is_some() {
+            // Any press dismisses a new-message popup (and marks it read).
+            self.popup_until = None;
+            if let Some(msg) = m.msgs.first_mut() {
+                msg.unread = false;
+            }
+            return Action::None;
+        }
         if self.detail {
             // Any press leaves a detail view.
             self.detail = false;
@@ -862,6 +909,21 @@ impl Ui {
         self.frame = self.frame.wrapping_add(1);
         d.clear();
         self.header(d, m);
+        // A message that arrived since the last frame pops up for 30 s.
+        if m.total_msgs != self.seen_msgs {
+            self.seen_msgs = m.total_msgs;
+            if !m.msgs.is_empty() {
+                self.popup_until = Some(now + 30_000);
+            }
+        }
+        if let Some(until) = self.popup_until {
+            if now < until {
+                self.popup(d, m, now);
+                let _ = d.flush_pages(0);
+                return;
+            }
+            self.popup_until = None;
+        }
         if self.detail {
             match self.screen {
                 Screen::Home => self.node_card(d, m, now),
@@ -883,7 +945,7 @@ impl Ui {
         let thumb = track / Screen::RING.len() as i32;
         d.vline(WIDTH as i32 - 1, 13, track);
         d.fill_rect(WIDTH as i32 - 2, 13 + thumb * self.screen.index() as i32, 2, thumb, true);
-        let _ = d.flush();
+        // The caller flushes (all at once or a few pages per loop iteration).
     }
 
     /// Inverted status bar: badge + name, role, compat, unread, nodes, battery.
@@ -901,6 +963,13 @@ impl Ui {
             d.fill_rect(x, 1, 7, 9, false);
             d.glyph(x + 1, 2, c.letter(), 1, true);
             x += 9;
+        } else if m.scan {
+            for c in [Proto::MeshCore, Proto::Meshtastic] {
+                d.fill_rect(x, 1, 7, 9, false);
+                d.glyph(x + 1, 2, c.letter(), 1, true);
+                x += 8;
+            }
+            x += 1;
         }
         if m.bridge {
             d.icon8(x, 2, &ICON_BRIDGE, false);
@@ -1027,6 +1096,48 @@ impl Ui {
         }
     }
 
+    /// Meshtastic-style incoming message screen: sender and network on top,
+    /// the text below, security and signal at the bottom.
+    fn popup<I: I2c>(&self, d: &mut Ssd1306<I>, m: &UiModel, now: u64) {
+        let Some(msg) = m.msgs.first() else { return };
+        d.fill_rect(0, 12, WIDTH as i32, 11, true);
+        d.badge(1, 13, msg.proto, false);
+        let from: heapless::String<12> = msg.from.chars().take(12).collect();
+        let x = d.text_on(10, 14, &from, false);
+        d.text_on(x + 4, 14, msg.channel.as_str(), false);
+        let age = Self::age(now, msg.at);
+        d.text_on(WIDTH as i32 - 6 * age.len() as i32 - 1, 14, &age, false);
+        Self::wrap_text(d, &msg.text, 25, 3, 21);
+        Self::sec_tag(d, 2, 55, msg.sec);
+        let meta = alloc::format!("{}dBm {}hop", msg.rssi, msg.hops);
+        d.text_right(WIDTH as i32 - 2, 55, &meta);
+    }
+
+    /// Draw `text` word-wrapped at `cols` columns, at most `lines` lines from `y`.
+    fn wrap_text<I: I2c>(d: &mut Ssd1306<I>, text: &str, y: i32, lines: i32, cols: usize) {
+        let mut yy = y;
+        let mut line = heapless::String::<32>::new();
+        let mut drawn = 0;
+        for w in text.split(' ') {
+            if !line.is_empty() && line.len() + 1 + w.len() > cols {
+                d.text(2, yy, &line);
+                yy += 9;
+                drawn += 1;
+                line.clear();
+                if drawn >= lines {
+                    return;
+                }
+            }
+            if !line.is_empty() {
+                let _ = line.push(' ');
+            }
+            let _ = line.push_str(&w.chars().take(cols).collect::<heapless::String<32>>());
+        }
+        if !line.is_empty() && drawn < lines {
+            d.text(2, yy, &line);
+        }
+    }
+
     fn message<I: I2c>(&self, d: &mut Ssd1306<I>, m: &UiModel, now: u64) {
         let Some(msg) = m.msgs.get(self.cursor) else { return };
         d.badge(1, 13, msg.proto, true);
@@ -1078,9 +1189,10 @@ impl Ui {
                 d.invert_rect(0, y, WIDTH as i32 - 3, 10);
             }
         }
-        let status = match m.compat {
-            None => alloc::string::String::from("scan: MeshStar only"),
-            Some(p) => alloc::format!("compat: {}", p.name()),
+        let status = match (m.compat, m.scan) {
+            (Some(p), _) => alloc::format!("compat: {}", p.name()),
+            (None, true) => alloc::string::String::from("scan: all networks"),
+            (None, false) => alloc::string::String::from("MeshStar only"),
         };
         d.text(4, 54, &status);
         // Blink a dot while listening.
@@ -1135,7 +1247,7 @@ impl Ui {
             let y = Self::row_y(i);
             d.text(4, y + 1, name);
             let value = match i {
-                0 => alloc::string::String::from(m.compat.map(|p| p.name()).unwrap_or("off")),
+                0 => alloc::string::String::from(m.compat.map(|p| p.name()).unwrap_or(if m.scan { "scan" } else { "off" })),
                 1 => alloc::string::String::from(if m.compat.is_some() { "hold" } else { "n/a" }),
                 2 => alloc::string::String::from("hold"),
                 3 => alloc::string::String::from(m.role.name()),
@@ -1155,21 +1267,20 @@ impl Default for Ui {
     }
 }
 
-/// Boot screen: logo, name, id and version.
-pub fn splash<I: I2c>(d: &mut Ssd1306<I>, name: &str, short_id: &str, version: &str) {
+/// Boot screen: the MeshStar logo (emblem above the wordmark).
+pub fn splash<I: I2c>(d: &mut Ssd1306<I>) {
     d.clear();
-    // The 12x12 star at 2x on the left, name and id on the right.
-    for (r, bits) in LOGO_STAR.iter().enumerate() {
-        for c in 0..12 {
-            if bits & (0x800 >> c) != 0 {
-                d.fill_rect(2 + c * 2, 10 + r as i32 * 2, 2, 2, true);
-            }
-        }
-    }
-    d.text_2x(30, 8, "MeshStar");
-    d.text(30, 26, name);
-    d.text(30, 36, short_id);
-    d.hline(0, 48, WIDTH as i32);
-    d.text(4, 53, version);
+    d.bitmap((WIDTH as i32 - logo::EMBLEM_W as i32) / 2, 0, logo::EMBLEM_W, logo::EMBLEM_H, &logo::EMBLEM);
+    d.bitmap(0, HEIGHT as i32 - logo::WORDMARK_H as i32, logo::WORDMARK_W, logo::WORDMARK_H, &logo::WORDMARK);
+    let _ = d.flush();
+}
+
+/// Second boot screen: name, id and version.
+pub fn boot_info<I: I2c>(d: &mut Ssd1306<I>, name: &str, short_id: &str, version: &str) {
+    d.clear();
+    d.bitmap(0, 2, logo::WORDMARK_W, logo::WORDMARK_H, &logo::WORDMARK);
+    d.text(4, 32, name);
+    d.text(4, 42, short_id);
+    d.text(4, 54, version);
     let _ = d.flush();
 }

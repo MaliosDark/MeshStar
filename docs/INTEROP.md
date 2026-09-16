@@ -77,6 +77,36 @@ API):
   `!416603a7`, which the board decoded as well (it is not answered yet: the
   compat firmware only sends texts, no `NodeInfo`/`Position`).
 
+### One radio, three networks: scan mode (validated 2026-09-16)
+
+`compat scan` (or the Networks screen) keeps the radio on the MeshStar
+profile and, between native polls, sweeps the foreign profiles with short
+CAD probes (2 symbols at SF11 for Meshtastic, 4 at SF8 for MeshCore, ~32 ms
+per sweep, one sweep every 50 ms). Foreign preambles last 130 ms or more,
+so a frame is probed inside its preamble; on a hit the radio locks to that
+profile (trying both, since a Meshtastic frame also trips the MeshCore
+probe: the channels overlap), waits ~5 symbols for the modem's preamble
+detection, receives the frame through the adapter layer, and retunes. A
+native frame that is already being received (preamble or header seen) is
+never interrupted, and the MeshStar profile's 32 symbol preamble is what
+makes a native frame survive a sweep (SX126x preamble detection needs ~5
+symbols after the radio comes back).
+
+Measured on the Heltec V3 (board B running the real foreign firmware,
+board A scanning, desk range):
+
+| traffic while A scans | received | notes |
+|---|---|---|
+| Meshtastic 2.7.26 `LongFast` texts | 18/20, 20/20 | first hit inside the 131 ms preamble in >90 % of frames |
+| MeshCore v1.17.1 `Public` texts | 9/10, 11/10 | the extra one is a copy relayed by a third-party MeshCore repeater in range |
+| MeshStar texts A>B and B>A with acks (B native) | 10/10 and 10/10 | no loss with the 32 symbol preamble; 0/10 with the old 12 symbol one |
+
+Costs: CAD false positives (~1/s at SF11 with 2 symbols; a MeshCore frame
+also trips it) each cost a ~80 ms lock-on attempt, i.e. ~8 % of listening
+time; the native preamble costs 41 ms per MeshStar frame. What is not done
+yet: replying on the foreign network from scan mode (the fixed compat modes
+do send), Meshtastic `NodeInfo`, and a time source for foreign timestamps.
+
 The compat firmware has no real-time clock yet: foreign timestamps are
 synthesised from uptime (`1700000000 + uptime`), so MeshCore shows 2023
 dates for MeshStar messages until an RTC/time sync exists.

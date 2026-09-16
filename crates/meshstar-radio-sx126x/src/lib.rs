@@ -110,8 +110,15 @@ pub struct Sx126x<SPI, NSS, RST, BUSY, DIO1, D> {
     delay: D,
     board: BoardConfig,
     profile: LoRaProfile,
+    /// Frequency the synthesizer is actually set to (a CAD probe may leave
+    /// it on a foreign channel while `profile` stays the configured one).
+    rf_hz: u32,
     stats: RadioStats,
     receiving: bool,
+    /// A valid LoRa header was seen and the frame has not finished yet.
+    rx_active: bool,
+    /// A preamble was detected since the last `start_receive` (sticky).
+    preamble_seen: bool,
 }
 
 impl<SPI, NSS, RST, BUSY, DIO1, D> Sx126x<SPI, NSS, RST, BUSY, DIO1, D>
@@ -124,7 +131,7 @@ where
     D: DelayNs,
 {
     pub fn new(spi: SPI, nss: NSS, rst: RST, busy: BUSY, dio1: DIO1, delay: D, board: BoardConfig) -> Self {
-        Self { spi, nss, rst, busy, dio1, delay, board, profile: LoRaProfile::MESHSTAR_EU868, stats: RadioStats::default(), receiving: false }
+        Self { spi, nss, rst, busy, dio1, delay, board, profile: LoRaProfile::MESHSTAR_EU868, rf_hz: 0, stats: RadioStats::default(), receiving: false, rx_active: false, preamble_seen: false }
     }
 
     fn wait_busy(&mut self) -> Result<(), RadioError> {
@@ -231,10 +238,18 @@ where
         Ok(())
     }
 
+    /// Program the synthesizer. Image calibration is only run when the
+    /// band changes: it takes milliseconds and upsets a CAD run right
+    /// after it, and profiles a gateway hops between share the band.
     fn set_frequency(&mut self, hz: u32) -> Result<(), RadioError> {
         // freq = hz * 2^25 / 32 MHz
         let f = ((hz as u64) << 25) / 32_000_000;
         self.cmd(op::SET_RF_FREQUENCY, &(f as u32).to_be_bytes())?;
+        let same_band = Self::band(hz) == Self::band(self.rf_hz);
+        self.rf_hz = hz;
+        if same_band {
+            return Ok(());
+        }
         // image calibration for the band
         let (a, b) = match hz {
             430_000_000..=440_000_000 => (0x6B, 0x6F),
@@ -245,6 +260,18 @@ where
             _ => return Ok(()),
         };
         self.cmd(op::CALIBRATE_IMAGE, &[a, b])
+    }
+
+    fn band(hz: u32) -> u8 {
+        match hz {
+            0 => 0,
+            430_000_000..=440_000_000 => 1,
+            470_000_000..=510_000_000 => 2,
+            779_000_000..=787_000_000 => 3,
+            863_000_000..=870_000_000 => 4,
+            902_000_000..=928_000_000 => 5,
+            _ => 6,
+        }
     }
 
     fn set_tx_power(&mut self, dbm: i8) -> Result<(), RadioError> {
@@ -299,9 +326,17 @@ where
     /// The radio is left in standby; call [`Radio::configure`] +
     /// [`Radio::start_receive`] (or [`Sx126x::sniff`]) afterwards.
     pub fn cad_probe(&mut self, profile: &LoRaProfile) -> Result<bool, RadioError> {
+        self.cad_probe_symbols(profile, 4)
+    }
+
+    /// [`Sx126x::cad_probe`] with a chosen CAD length (1, 2, 4, 8 or 16
+    /// symbols). Fewer symbols make the probe shorter (a scanning gateway
+    /// wants 2 at SF11) at the price of more false positives, which the
+    /// caller filters by waiting for a header after locking on.
+    pub fn cad_probe_symbols(&mut self, profile: &LoRaProfile, symbols: u8) -> Result<bool, RadioError> {
         self.cmd(op::SET_STANDBY, &[0x00])?;
         self.receiving = false;
-        if profile.frequency_hz != self.profile.frequency_hz {
+        if profile.frequency_hz != self.rf_hz {
             self.set_frequency(profile.frequency_hz)?;
         }
         let bw = Self::bandwidth_code(profile.bandwidth_hz)?;
@@ -310,16 +345,26 @@ where
         let sw = profile.sync_word_sx126x();
         self.write_register(reg::LORA_SYNC_WORD_MSB, (sw >> 8) as u8)?;
         self.write_register(reg::LORA_SYNC_WORD_LSB, sw as u8)?;
+        // Thresholds from Semtech AN1200.48 (detPeak grows with SF).
         let (det_peak, det_min) = match profile.spreading_factor {
-            5..=7 => (22, 10),
-            8..=10 => (23, 10),
-            _ => (24, 10),
+            5..=8 => (22, 10),
+            9 => (23, 10),
+            10 => (24, 10),
+            11 => (25, 10),
+            _ => (28, 10),
         };
-        // 4 symbols of CAD, exit to standby with the result in the IRQ flags
-        self.cmd(op::SET_CAD_PARAMS, &[0x02, det_peak, det_min, 0x00, 0x00, 0x00, 0x00])?;
+        let (code, n) = match symbols {
+            0..=1 => (0x00, 1),
+            2..=3 => (0x01, 2),
+            4..=7 => (0x02, 4),
+            8..=15 => (0x03, 8),
+            _ => (0x04, 16),
+        };
+        // CAD, exit to standby with the result in the IRQ flags
+        self.cmd(op::SET_CAD_PARAMS, &[code, det_peak, det_min, 0x00, 0x00, 0x00, 0x00])?;
         self.clear_irq(0xFFFF)?;
         self.cmd(op::SET_CAD, &[])?;
-        let budget_ms = 4 * profile.symbol_time_us() / 1000 + 5;
+        let budget_ms = n * profile.symbol_time_us() / 1000 + 5;
         for _ in 0..budget_ms.max(1) * 2 {
             let s = self.irq_status()?;
             if s & irq::CAD_DONE != 0 {
@@ -356,6 +401,60 @@ where
             }
         }
         Ok(None)
+    }
+
+    /// Return to `profile` after [`Sx126x::cad_probe`] with the minimum of
+    /// SPI traffic (frequency if it changed, modulation, sync word, packet
+    /// parameters) and enter receive mode. `profile` must have been fully
+    /// configured before (PA, packet type, IRQ mask are kept).
+    pub fn retune(&mut self, profile: &LoRaProfile) -> Result<(), RadioError> {
+        self.cmd(op::SET_STANDBY, &[0x00])?;
+        self.receiving = false;
+        self.profile = *profile;
+        if profile.frequency_hz != self.rf_hz {
+            self.set_frequency(profile.frequency_hz)?;
+        }
+        let bw = Self::bandwidth_code(profile.bandwidth_hz)?;
+        let ldro = if profile.low_data_rate_optimize() { 0x01 } else { 0x00 };
+        self.cmd(op::SET_MODULATION_PARAMS, &[profile.spreading_factor, bw, profile.coding_rate - 4, ldro])?;
+        let sw = profile.sync_word_sx126x();
+        self.write_register(reg::LORA_SYNC_WORD_MSB, (sw >> 8) as u8)?;
+        self.write_register(reg::LORA_SYNC_WORD_LSB, sw as u8)?;
+        self.start_receive()
+    }
+
+    /// True when the modem has detected a preamble or a valid header since
+    /// the IRQ flags were last cleared, i.e. a frame is being received on
+    /// the current profile. Does not clear anything.
+    pub fn rx_started(&mut self) -> Result<bool, RadioError> {
+        let s = self.irq_status()?;
+        Ok(self.rx_active || s & (irq::PREAMBLE_DETECTED | irq::HEADER_VALID | irq::RX_DONE) != 0)
+    }
+
+    /// True between a valid header and the end of that frame, as observed
+    /// by [`Radio::receive`] polls. A caller that wants to interrupt
+    /// reception (CAD probes on other profiles) checks this first.
+    pub fn rx_active(&self) -> bool {
+        self.rx_active
+    }
+
+    /// True once a preamble or header was detected since the last
+    /// `start_receive` (sticky, so a poll loop cannot miss the moment). A
+    /// gateway that just locked onto a foreign profile after a CAD hit uses
+    /// this to decide whether a frame is really coming.
+    pub fn preamble_seen(&self) -> bool {
+        self.preamble_seen || self.rx_active
+    }
+
+    /// Forget a sticky preamble detection (a caller that waited the length
+    /// of a preamble plus header without a valid header gives up on it).
+    pub fn clear_preamble_seen(&mut self) {
+        self.preamble_seen = false;
+    }
+
+    /// The profile the radio is currently configured for.
+    pub fn profile(&self) -> &LoRaProfile {
+        &self.profile
     }
 
     /// Instantaneous RSSI in dBm.
@@ -395,8 +494,10 @@ where
         self.write_register(reg::RX_GAIN, 0x96)?; // boosted gain
         self.set_tx_power(profile.tx_power_dbm)?;
         self.set_packet_params(255)?;
-        // IRQs on DIO1: TxDone, RxDone, Timeout, CRC error, CAD done/detected
-        let mask = irq::TX_DONE | irq::RX_DONE | irq::TIMEOUT | irq::CRC_ERR | irq::CAD_DONE | irq::CAD_DETECTED | irq::HEADER_ERR;
+        // IRQs on DIO1: TxDone, RxDone, Timeout, CRC error, CAD done/detected,
+        // plus preamble/header so a sniffing gateway can tell a real frame
+        // from a CAD false positive (`rx_started`).
+        let mask = irq::TX_DONE | irq::RX_DONE | irq::TIMEOUT | irq::CRC_ERR | irq::CAD_DONE | irq::CAD_DETECTED | irq::HEADER_ERR | irq::PREAMBLE_DETECTED | irq::HEADER_VALID;
         let m = mask.to_be_bytes();
         self.cmd(op::SET_DIO_IRQ_PARAMS, &[m[0], m[1], m[0], m[1], 0x00, 0x00, 0x00, 0x00])?;
         // CAD: 4 symbols, thresholds per datasheet application note for SF
@@ -454,6 +555,8 @@ where
         // continuous RX
         self.cmd(op::SET_RX, &[0xFF, 0xFF, 0xFF])?;
         self.receiving = true;
+        self.rx_active = false;
+        self.preamble_seen = false;
         Ok(())
     }
 
@@ -466,15 +569,27 @@ where
             return Ok(None);
         }
         let s = self.irq_status()?;
-        if s & (irq::CRC_ERR | irq::HEADER_ERR) != 0 {
+        if s & (irq::CRC_ERR | irq::HEADER_ERR | irq::TIMEOUT) != 0 {
             self.clear_irq(0xFFFF)?;
+            self.rx_active = false;
             self.stats.rx_crc_errors += 1;
             return Err(RadioError::CrcError);
         }
         if s & irq::RX_DONE == 0 {
+            // Preamble/header flags are cleared here; a valid header marks
+            // the frame as in progress until RX_DONE or an error.
+            if s & irq::HEADER_VALID != 0 {
+                self.rx_active = true;
+                self.stats.headers += 1;
+            }
+            if s & irq::PREAMBLE_DETECTED != 0 {
+                self.preamble_seen = true;
+                self.stats.preambles += 1;
+            }
             self.clear_irq(s)?;
             return Ok(None);
         }
+        self.rx_active = false;
         let mut st = [0u8; 2];
         self.cmd_read(op::GET_RX_BUFFER_STATUS, &[], &mut st)?;
         let len = st[0] as usize;

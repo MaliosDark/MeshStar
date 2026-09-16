@@ -65,9 +65,11 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
    sin ruta; caché de claves de LEAF distribuida en beacons completos de los hosts (32 B por
    LEAF, rotando); reintento del RREQ de clave con TTL pequeño hacia el host conocido.
 4. ~~Validar la interoperabilidad~~ **Hecho** (2026-09-16): MeshCore companion v1.17.1 y
-   Meshtastic 2.7.26 reales, ambos en los dos sentidos (ver docs/INTEROP.md). Falta un
-   reloj/sincronización de hora para los timestamps foráneos y responder `NodeInfo` en
-   modo Meshtastic (hoy el firmware compat sólo envía textos).
+   Meshtastic 2.7.26 reales, ambos en los dos sentidos (ver docs/INTEROP.md). **Modo scan
+   con una sola radio validado**: A en MeshStar + sondeos CAD recibe 18-20/20 Meshtastic,
+   9-11/10 MeshCore y 10/10 nativo con acks (el perfil MeshStar pasa a preámbulo de 32
+   símbolos para sobrevivir al barrido). Falta: responder en la red foránea desde scan,
+   `NodeInfo` Meshtastic, reloj para timestamps foráneos.
 5. Optimizaciones de protocolo pendientes de medir: m3 + primer DATA en un solo paquete;
    clave Ed25519 comprimida a 1 bit de signo en m2/m3 (-31 B); LINK_ACK sólo cuando no hay
    respuesta inmediata; beacons más cortos (direcciones truncadas en entradas de zona).

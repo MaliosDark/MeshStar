@@ -16,12 +16,20 @@ fn base(n: usize, strategy: Strategy) -> Scenario {
 
 #[test]
 fn small_local_network_delivers_with_zrp() {
-    let m = run_scenario(base(30, Strategy::Zrp));
-    assert!(m.messages_sent >= 25, "{}", m.messages_sent);
-    assert!(m.delivery_ratio > 0.55, "delivery {:.2} failed {:?}", m.delivery_ratio, m.failed_by_reason);
-    assert!(m.avg_hops >= 1.0);
-    assert!(m.tx_per_delivery < 25.0, "{}", m.tx_per_delivery);
-    assert!(m.energy_leaf_mah < m.energy_anchor_mah / 5.0, "leaf {} anchor {}", m.energy_leaf_mah, m.energy_anchor_mah);
+    // Single runs swing by +-15 points with the seed (30 nodes, ~50
+    // messages), so the delivery bar is on the mean of three worlds.
+    let mut delivery = 0.0;
+    for seed in [7u64, 1, 2] {
+        let mut s = base(30, Strategy::Zrp);
+        s.seed = seed;
+        let m = run_scenario(s);
+        assert!(m.messages_sent >= 25, "{}", m.messages_sent);
+        assert!(m.avg_hops >= 1.0);
+        assert!(m.tx_per_delivery < 25.0, "{}", m.tx_per_delivery);
+        assert!(m.energy_leaf_mah < m.energy_anchor_mah / 5.0, "leaf {} anchor {}", m.energy_leaf_mah, m.energy_anchor_mah);
+        delivery += m.delivery_ratio / 3.0;
+    }
+    assert!(delivery > 0.55, "mean delivery {:.2}", delivery);
 }
 
 #[test]
