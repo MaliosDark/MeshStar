@@ -5,8 +5,7 @@ antes de tocar código; `CLAUDE.md` tiene las reglas del repositorio.
 
 ## 1. Qué existe y funciona
 
-`cargo test --workspace --release`: **183 tests, 0 fallos**. `cargo clippy` limpio salvo 3
-avisos cosméticos.
+`cargo test --workspace --release`: **183 tests, 0 fallos**. `cargo clippy --workspace --all-targets`: 0 avisos.
 
 | Componente | Estado |
 |---|---|
@@ -21,8 +20,8 @@ avisos cosméticos.
 
 ## 2. Resultados clave (docs/BENCHMARKS.md)
 
-Tráfico local, 2 msg/min: ZRP entrega 75/72/72/66 % a 30/100/300/1000 nodos con 13–15
-transmisiones por mensaje; flooding protegido 48/43/39/34 %; flooding puro necesita 46–355
+Tráfico local, 2 msg/min: ZRP entrega 72/68/69/69 % a 30/100/300/1000 nodos con 10–16
+transmisiones por mensaje; flooding protegido 45/40/37/39 %; flooding puro necesita 51–250
 transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo degrada
 (caso peor); ZRP sigue siendo 2–2,5× mejor que flooding protegido.
 
@@ -39,6 +38,10 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
   después se reinicia la sesión.
 * Los adaptadores foráneos nunca tocan `meshstar-core`; el bridge está apagado por defecto y el
   tráfico E2E de MeshStar nunca se traduce.
+* Modelo de host para LEAF: cualquier nodo siempre encendido aloja a las LEAF que lo eligen
+  (la LEAF nombra a su host en su beacon); ANCHOR preferido (bonus de calidad +60, buzón
+  grande). Secuencia de despertar: beacon primero, FETCH sólo si nadie responde; jitter ±20 %
+  en el sueño; extensión de ventana por actividad con tope de 5 ventanas.
 
 ## 4. Pendiente, por prioridad
 
@@ -47,9 +50,12 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
    `sudo usermod -aG dialout $USER` para que las sesiones futuras puedan hablar con la placa).
 2. **Compilar y flashear los ejemplos** en una placa que no sea la de referencia; ajustar a la
    versión de `esp-hal` instalada; validar los drivers en hardware real (sync word, CAD, RSSI).
-3. **Store-and-forward a escala** (benchmark F: 13,6 %): el ANCHOR debe responder `WANT_KEY` con
-   la clave de sus LEAF adjuntas siempre que la tenga; permitir al remitente sellar con la clave
-   que llega en el RREP proxy; revisar tamaños de buzón y política de reintentos.
+3. **Store-and-forward a escala** (benchmark F: 19,7 % entregado, 18 % confirmado tras el
+   rediseño LEAF/host). Lo que queda es la fiabilidad de la respuesta de descubrimiento a varios
+   saltos (el remitente necesita llegar al host de la LEAF para obtener la clave). Ideas: que
+   cualquier nodo que conozca la clave de una LEAF pueda adjuntarla en un RREP de "sólo clave"
+   sin ruta; caché de claves de LEAF distribuida en beacons completos de los hosts (32 B por
+   LEAF, rotando); reintento del RREQ de clave con TTL pequeño hacia el host conocido.
 4. **Validar la interoperabilidad con dispositivos reales** (los vectores AES-CTR y ADVERT se
    derivaron del código fuente, no de capturas). Marcar como verificado en las notas.
 5. Optimizaciones de protocolo pendientes de medir: m3 + primer DATA en un solo paquete;
