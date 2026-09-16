@@ -1,0 +1,32 @@
+[package]
+name = "meshstar-protocols"
+description = "Protocol adapter layer: MeshStar native, Meshtastic and MeshCore adapters, detector, unified message model, bridge/gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["std", "meshtastic", "meshcore"]
+std = ["meshstar-core/std"]
+meshtastic = []
+meshcore = []
+
+[dependencies]
+meshstar-core = { path = "../meshstar-core", default-features = false }
+serde = { workspace = true, features = ["alloc"] }
+hex = { workspace = true }
+rand_core = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+ed25519-dalek = { workspace = true }
+x25519-dalek = { workspace = true }
+aes = { version = "0.8", default-features = false }
+ctr = { version = "0.9", default-features = false }
+ccm = { version = "0.5", default-features = false }
+cipher = { version = "0.4", default-features = false, features = ["block-padding"] }
+log = { workspace = true }
+
+[dev-dependencies]
+rand_chacha = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "meshstar-radio-sx127x"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+meshstar-core = { path = "../meshstar-core", default-features = false }
+embedded-hal = { workspace = true }

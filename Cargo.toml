@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/meshstar-core",
+    "crates/meshstar-protocols",
+    "crates/meshstar-radio-sx126x",
+    "crates/meshstar-radio-sx127x",
+    "crates/meshstar-sim",
+    "crates/meshstar-cli",
+]
+# ESP32 firmware examples need the Xtensa/RISC-V toolchain (espup) and are
+# built on their own: `cd examples/esp32-sx1262 && cargo build --release`.
+exclude = ["examples/esp32-sx1262", "examples/esp32-sx1276"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/meshstar/meshstar"
+authors = ["MeshStar contributors"]
+
+[workspace.dependencies]
+ed25519-dalek = { version = "2", default-features = false }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+chacha20poly1305 = { version = "0.10", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+log = "0.4"
+embedded-hal = "1.0"
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
