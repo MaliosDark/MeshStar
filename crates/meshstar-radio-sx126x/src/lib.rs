@@ -210,7 +210,7 @@ where
         self.cmd(op::SET_STANDBY, &[0x00])?; // STDBY_RC
         if let Some(v) = self.board.dio3_tcxo {
             // delay in 15.625 us steps
-            let d = (self.board.tcxo_delay_ms * 64) as u32;
+            let d = self.board.tcxo_delay_ms * 64;
             self.cmd(op::SET_DIO3_AS_TCXO_CTRL, &[v, (d >> 16) as u8, (d >> 8) as u8, d as u8])?;
             self.cmd(op::CALIBRATE, &[0x7F])?;
             self.delay.delay_ms(5);

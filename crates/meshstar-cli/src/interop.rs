@@ -71,7 +71,7 @@ pub fn protocols() {
 }
 
 pub fn profiles() {
-    println!("{:<12} {:<28} {:<8} {:<52} {}", "protocol", "name", "region", "modem", "verified");
+    println!("{:<12} {:<28} {:<8} {:<52} verified", "protocol", "name", "region", "modem");
     for p in all_profiles() {
         println!("{:<12} {:<28} {:<8} {:<52} {}", p.protocol, p.name, p.region, p.profile.to_string(), if p.verified { "yes" } else { "NO (unverified)" });
     }
@@ -82,7 +82,7 @@ pub fn scan(file: Option<String>, profile: &str, verbose: bool) {
     let p = profile_by_name(profile);
     let ctx = full_context(p.profile);
     let mut det = Detector::with_all(None, None);
-    println!("{:<5} {:<5} {:<11} {:<5} {}", "#", "len", "protocol", "score", "summary");
+    println!("{:<5} {:<5} {:<11} {:<5} summary", "#", "len", "protocol", "score");
     for (i, f) in frames.iter().enumerate() {
         let (d, r) = det.classify(f, &RxMeta::new(-90, 5.0, 0), &ctx);
         let label = match d.protocol {

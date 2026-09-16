@@ -17,7 +17,7 @@ pub fn compare_table(names: &[String], runs: &[Metrics]) -> String {
     out.push('\n');
     out.push_str(&"-".repeat(28 + 18 * names.len()));
     out.push('\n');
-    let f = |g: &dyn Fn(&Metrics) -> String| runs.iter().map(|m| g(m)).collect::<Vec<_>>();
+    let f = |g: &dyn Fn(&Metrics) -> String| runs.iter().map(g).collect::<Vec<_>>();
     out.push_str(&row("nodes", &f(&|m| m.nodes.to_string())));
     out.push('\n');
     out.push_str(&row("avg radio degree", &f(&|m| format!("{:.1}", m.average_degree))));

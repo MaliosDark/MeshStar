@@ -92,7 +92,7 @@ impl RadioProtocol for MeshStarAdapter {
                     PacketType::RouteRequest => h.dst.is_broadcast() && meshstar_core::zrp::RouteRequest::decode(&p.payload).is_ok(),
                     PacketType::RouteReply => !h.dst.is_broadcast() && meshstar_core::zrp::RouteReply::decode(&p.payload).is_ok(),
                     PacketType::RouteError => meshstar_core::zrp::RouteError::decode(&p.payload).is_ok(),
-                    PacketType::Handshake => plen >= 1 + 32 && !h.dst.is_broadcast(),
+                    PacketType::Handshake => plen > 32 && !h.dst.is_broadcast(),
                     PacketType::Store | PacketType::Fetch => h.has(flags::ENCRYPTED) && plen >= meshstar_core::crypto::TRANSPORT_OVERHEAD,
                     PacketType::Control => plen >= 1 && !h.dst.is_broadcast(),
                 };

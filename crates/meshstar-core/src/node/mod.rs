@@ -362,6 +362,10 @@ impl Node {
     pub fn routes(&self) -> &RouteCache {
         &self.routes
     }
+    /// Mutable route cache (tests, static routes, operator tools).
+    pub fn routes_mut(&mut self) -> &mut RouteCache {
+        &mut self.routes
+    }
     pub fn sessions(&self) -> &BTreeMap<Address, Session> {
         &self.sessions
     }
