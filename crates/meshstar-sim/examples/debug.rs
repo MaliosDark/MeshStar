@@ -37,6 +37,40 @@ fn main() {
         let mut v: Vec<usize> = sizes.values().copied().collect(); v.sort_unstable_by(|a, b| b.cmp(a));
         println!("good-link graph (margin >= {} dB) among always-on nodes: components {:?}", margin, v);
     }
+    let (mut att, mut conf) = (0u64, 0u64);
+    let mut hist = [0u32; 6];
+    for n in &w.nodes { for nb in n.node.neighbors().iter() { att += nb.tx_attempts as u64; conf += nb.tx_confirmed as u64; if nb.tx_attempts >= 5 { let e = nb.etx(); let b = ((e - 1.0) * 2.0) as usize; hist[b.min(5)] += 1; } } }
+    println!("hop attempts {} confirmed {} -> mean ETX {:.2}; ETX histogram (1-1.5,1.5-2,2-2.5,2.5-3,3-3.5,>3.5) {:?}", att, conf, att as f32 / conf.max(1) as f32, hist);
+    if std::env::var("CONF").is_ok() {
+        // Why do hop confirmations fail? For each unicast transmission received ok by its intended
+        // next hop, look at what the next hop did within 6 s.
+        let mut cats: std::collections::BTreeMap<&str, u32> = Default::default();
+        let uni = |ty: &str| ty == "DATA" || ty == "HANDSHAKE" || ty == "ROUTE_REPLY" || ty == "ACK";
+        let n = w.trace.len();
+        for i in 0..n {
+            let x = &w.trace[i];
+            if !uni(&x.3) || x.4 == 0xFFFF || w.nodes[x.2].addr.short() != x.4 || x.5 != "ok" { continue; }
+            let (t, from, nh, id) = (x.0, x.1, x.2, w.trace_ids[i].0);
+            // did nh transmit the same id (relay) or a CONTROL to `from`?
+            let mut relayed = None; let mut ack = None;
+            for j in i + 1..n {
+                let y = &w.trace[j];
+                if y.0 > t + 6000 { break; }
+                if y.1 != nh { continue; }
+                if w.trace_ids[j].0 == id && y.2 == from { relayed = Some(y.5); }
+                if y.3 == "CONTROL" && y.2 == from && w.nodes[from].addr.short() == y.4 && y.0 < t + 3000 { ack = Some(y.5); }
+            }
+            let cat = match (relayed, ack) {
+                (Some("ok"), _) => "relayed, heard ok",
+                (Some(o), _) => if o == "collision" { "relayed, lost at sender: collision" } else { "relayed, lost at sender: noise/asleep" },
+                (None, Some("ok")) => "link ack heard ok",
+                (None, Some(_)) => "link ack lost",
+                (None, None) => "no relay and no link ack within window",
+            };
+            *cats.entry(cat).or_default() += 1;
+        }
+        println!("confirmation outcomes {:?}", cats);
+    }
     let mut agg = std::collections::BTreeMap::new();
     for n in &w.nodes {
         let c = n.node.counters();

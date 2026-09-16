@@ -104,11 +104,11 @@ impl Default for NodeConfig {
             power: PowerConfig::default(),
             session: SessionLimits::default(),
             reassembly: ReassemblyConfig::default(),
-            handshake_timeout_ms: 60_000,
+            handshake_timeout_ms: 120_000,
             max_tx_queue: 32,
             envelope_ttl_s: 24 * 3600,
             unicast_forward_jitter_ms: 60,
-            hop_ack_timeout_ms: 400,
+            hop_ack_timeout_ms: 1_500,
             hop_retries: 2,
         }
     }
@@ -640,7 +640,17 @@ impl Node {
         // A handshake with a LEAF spans its sleep cycle: keep the state
         // until it has had a chance to wake up twice.
         let leaf_timeout = |n: Option<&crate::neighbor::Neighbor>| n.filter(|n| n.is_leaf() && n.sleep_interval_s > 0).map(|n| n.sleep_interval_s as u64 * 1000 * 2 + timeout).unwrap_or(timeout);
-        let expired: Vec<Address> = self.handshakes.iter().filter(|(a, h)| now.saturating_sub(h.started_at) > leaf_timeout(self.neighbors.get(a))).map(|(a, _)| *a).collect();
+        // A responder waits for message 3 from an initiator that may still
+        // be running a discovery: give it twice the initiator's budget.
+        let expired: Vec<Address> = self
+            .handshakes
+            .iter()
+            .filter(|(a, h)| {
+                let budget = leaf_timeout(self.neighbors.get(a)) * if h.hs.role() == crate::crypto::NoiseRole::Responder { 2 } else { 1 };
+                now.saturating_sub(h.started_at) > budget
+            })
+            .map(|(a, _)| *a)
+            .collect();
         for a in expired {
             if let Some(h) = self.handshakes.remove(&a) {
                 for q in h.queued {

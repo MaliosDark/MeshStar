@@ -127,7 +127,7 @@ impl Neighbor {
     /// unicast confirmed at the first attempt). Smoothed with a prior so a
     /// single loss does not condemn a link; decays as statistics grow.
     pub fn etx(&self) -> f32 {
-        (self.tx_attempts as f32 + 2.0) / (self.tx_confirmed as f32 + 2.0)
+        (self.tx_attempts as f32 + 4.0) / (self.tx_confirmed as f32 + 4.0)
     }
 
     /// Link quality 0..255 combining SNR margin, beacon delivery ratio,
@@ -139,7 +139,9 @@ impl Neighbor {
         let dr = self.delivery_ratio();
         let fail = 1.0 - (self.failures as f32 * 0.15).min(0.8);
         let etx = (1.0 / self.etx()).clamp(0.1, 1.0);
-        let q = (0.4 * margin + 0.3 * dr + 0.3 * etx) * fail;
+        // ETX measures *confirmed* hops; lost confirmations inflate it, so
+        // it carries less weight than the radio measurements.
+        let q = (0.45 * margin + 0.35 * dr + 0.2 * etx) * fail;
         (q.clamp(0.0, 1.0) * 255.0) as u8
     }
 

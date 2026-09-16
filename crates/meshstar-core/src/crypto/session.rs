@@ -42,7 +42,9 @@ pub struct SessionLimits {
 
 impl Default for SessionLimits {
     fn default() -> Self {
-        Self { idle_timeout_ms: 30 * 60 * 1000, max_age_ms: 12 * 60 * 60 * 1000, max_messages: 50_000 }
+        // Session setup costs several network traversals on LoRa: keep
+        // sessions for hours, rekey daily.
+        Self { idle_timeout_ms: 4 * 60 * 60 * 1000, max_age_ms: 24 * 60 * 60 * 1000, max_messages: 50_000 }
     }
 }
 

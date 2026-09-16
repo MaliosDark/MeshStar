@@ -52,7 +52,7 @@ impl Default for StormConfig {
             min_delay_ms: 40,
             max_delay_ms: 600,
             counter_threshold: 3,
-            density_threshold: 6,
+            density_threshold: 4,
             min_forward_percent: 25,
             max_pending: 16,
         }
@@ -308,8 +308,8 @@ mod tests {
     fn probability_scales_with_density() {
         let cfg = StormConfig::default();
         assert_eq!(forward_percent(&cfg, 3), 100);
-        assert_eq!(forward_percent(&cfg, 6), 100);
-        assert_eq!(forward_percent(&cfg, 12), 50);
+        assert_eq!(forward_percent(&cfg, 4), 100);
+        assert_eq!(forward_percent(&cfg, 8), 50);
         assert_eq!(forward_percent(&cfg, 100), cfg.min_forward_percent);
     }
 

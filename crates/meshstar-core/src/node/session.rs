@@ -204,13 +204,30 @@ impl Node {
     /// initiator of a young session (bounded).
     pub(crate) fn on_no_session_notice(&mut self, peer: Address, now: u64) {
         let Some(s) = self.sessions.get_mut(&peer) else { return };
-        if s.m3_resends >= 3 || now.saturating_sub(s.established_at) > self.cfg.handshake_timeout_ms {
-            return;
+        let can_resend = s.m3_resends < 3 && now.saturating_sub(s.established_at) <= self.cfg.handshake_timeout_ms;
+        if can_resend {
+            if let Some(m3) = s.m3.clone() {
+                s.m3_resends += 1;
+                self.counters.m3_resends += 1;
+                self.send_handshake_packet(peer, HandshakeMessage::Three, m3, now);
+                return;
+            }
         }
-        let Some(m3) = s.m3.clone() else { return };
-        s.m3_resends += 1;
-        self.counters.m3_resends += 1;
-        self.send_handshake_packet(peer, HandshakeMessage::Three, m3, now);
+        // The peer will never accept this session: drop it and start over,
+        // re-queueing whatever was in flight behind a fresh handshake.
+        self.sessions.remove(&peer);
+        self.transport.reset_peer(&peer);
+        self.counters.sessions_reset += 1;
+        self.emit(NodeEvent::SessionClosed(peer));
+        let pending: Vec<crate::transport::Outstanding> = self.transport.fail_all_to(&peer);
+        self.transport.stats.failed = self.transport.stats.failed.saturating_sub(pending.len() as u32);
+        for o in pending {
+            if o.reliability == Reliability::StoreAndForward {
+                continue;
+            }
+            let q = QueuedSend { dst: peer, payload: o.body, reliability: o.reliability, handle: o.handle, queued_at: now };
+            self.send_or_queue(q, now);
+        }
     }
 
     /// Close a session explicitly (tells the peer).

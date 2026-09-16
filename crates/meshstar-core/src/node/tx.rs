@@ -700,7 +700,10 @@ impl Node {
     /// Time to wait for a hop confirmation: our airtime, the relay's
     /// forwarding jitter and its own airtime, plus a fixed margin.
     pub(crate) fn hop_timeout(&self, wire_len: usize) -> u64 {
-        2 * self.cfg.profile.airtime_ms(wire_len) as u64 + self.cfg.unicast_forward_jitter_ms as u64 + self.cfg.hop_ack_timeout_ms as u64
+        // Our airtime, the relay's listen-before-talk wait and queueing, its
+        // airtime, and a generous margin: a spurious retransmission costs
+        // more than a late recovery.
+        3 * self.cfg.profile.airtime_ms(wire_len) as u64 + self.cfg.unicast_forward_jitter_ms as u64 + self.cfg.hop_ack_timeout_ms as u64
     }
 
     /// The next hop confirmed reception of `key` (relayed it, or LINK_ACKed).
