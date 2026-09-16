@@ -246,6 +246,9 @@ pub struct Node {
     pub(crate) attached_anchor: Option<Address>,
     pub(crate) rx_airtime_ms: u64,
     pub(crate) last_housekeeping: u64,
+    /// Last time the node woke up (LEAF: neighbours are not expired for
+    /// time spent asleep).
+    pub(crate) last_wake: u64,
     /// ANCHOR: packets held for a sleeping LEAF neighbour, (leaf, packet, expires).
     pub(crate) held_for_sleeping: Vec<(Address, Packet, u64)>,
 }
@@ -292,6 +295,7 @@ impl Node {
             attached_anchor: None,
             rx_airtime_ms: 0,
             last_housekeeping: now,
+            last_wake: now,
             held_for_sleeping: Vec::new(),
             cfg,
             id,
@@ -467,6 +471,7 @@ impl Node {
 
         match self.power.tick(now) {
             Some(true) => {
+                self.last_wake = now;
                 self.emit(NodeEvent::PowerState { awake: true });
                 self.on_wake(now);
             }
@@ -510,13 +515,12 @@ impl Node {
             self.retry_outstanding(o, now);
         }
         for o in failed {
-            let reason = if o.stored { FailReason::NoAck } else { FailReason::NoAck };
             if o.stored {
                 // Reported as stored earlier; final delivery unknown. Nothing more to say.
                 continue;
             }
             self.routes.mark_failure(&o.dst, &o.dst);
-            self.emit(NodeEvent::Failed { handle: o.handle, to: o.dst, reason });
+            self.emit(NodeEvent::Failed { handle: o.handle, to: o.dst, reason: FailReason::NoAck });
         }
 
         // Handshake timeouts.
@@ -543,8 +547,13 @@ impl Node {
         self.routes.expire(now);
         self.zone.expire(now);
         self.reassembler.expire(now);
-        for a in self.neighbors.expire(now) {
-            self.on_neighbor_lost(a, now);
+        // A LEAF that just woke up has not had the chance to hear anybody:
+        // only expire neighbours once it has been awake for a full timeout.
+        let leaf_grace = self.cfg.role == Role::Leaf && now.saturating_sub(self.last_wake) < self.neighbors.timeout_ms();
+        if !leaf_grace {
+            for a in self.neighbors.expire(now) {
+                self.on_neighbor_lost(a, now);
+            }
         }
         // Sessions.
         let limits = self.cfg.session;

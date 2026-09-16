@@ -198,7 +198,7 @@ impl Transport {
     }
 
     fn rto(&self, attempts: u8, rng: &mut impl RngCore) -> u64 {
-        let base = self.cfg.initial_rto_ms.saturating_mul(1u64 << attempts.min(6));
+        let base = self.cfg.initial_rto_ms.saturating_mul(1u64 << attempts.saturating_sub(1).min(6));
         let base = base.min(self.cfg.max_rto_ms);
         base + rng.next_u64() % (base / 2 + 1)
     }
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(r[0].attempts, 2);
         assert!(f.is_empty());
         let d1 = t.next_deadline().unwrap();
-        assert!(d1 >= 100 + 400 && d1 <= 100 + 600, "{}", d1); // 100 * 2^2 = 400 + jitter
+        assert!((100 + 200..=100 + 300).contains(&d1), "{}", d1); // 100 * 2^1 = 200 + jitter
         let (r, _) = t.tick(d1, &mut rng);
         assert_eq!(r[0].attempts, 3);
         let d2 = t.next_deadline().unwrap();

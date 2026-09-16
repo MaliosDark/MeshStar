@@ -60,7 +60,8 @@ pub struct Neighbor {
     pub advertised_neighbors: u8,
     pub zone_radius: u8,
     pub battery_percent: u8,
-    /// LEAF only: seconds between wake-ups (0 = not a leaf / always on).
+    /// Announced seconds until the peer's next beacon (LEAF: wake interval).
+    /// 0 = unknown, assume our own configured interval.
     pub sleep_interval_s: u16,
     /// LEAF only: our estimate of when it is next listening.
     pub awake_until: Option<u64>,
@@ -306,11 +307,14 @@ impl NeighborTable {
     /// Drop silent neighbours. Returns the addresses removed.
     pub fn expire(&mut self, now: u64) -> Vec<Address> {
         let timeout = self.timeout_ms();
+        let jitter = self.cfg.beacon_jitter_ms;
+        let intervals = self.cfg.timeout_intervals as u64;
         let dead: Vec<Address> = self
             .map
             .values()
             .filter(|n| {
-                let t = if n.is_leaf() { timeout.max(n.sleep_interval_s as u64 * 1000 * 2) } else { timeout };
+                let announced = n.sleep_interval_s as u64 * 1000;
+                let t = if announced > 0 { timeout.max((announced + jitter) * intervals) } else { timeout };
                 now.saturating_sub(n.last_seen) > t
             })
             .map(|n| n.addr)

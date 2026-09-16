@@ -147,7 +147,10 @@ impl Ierp {
         }
         match self.last_finished.get(target) {
             Some((t, false)) => now.saturating_sub(*t) >= self.cfg.discovery_holdoff_ms,
-            _ => true,
+            // A route that was just found but is unusable must not trigger an
+            // immediate re-discovery storm.
+            Some((t, true)) => now.saturating_sub(*t) >= self.cfg.discovery_holdoff_ms / 4,
+            None => true,
         }
     }
 
@@ -191,6 +194,7 @@ impl Ierp {
 
     /// Advance timed-out discoveries. Returns `(target, req_id, ttl)` for
     /// each retry to send and `(target, queued)` for each failure.
+    #[allow(clippy::type_complexity)]
     pub fn tick(&mut self, now: u64, new_req_id: impl FnMut() -> u32) -> (Vec<(Address, u32, u8)>, Vec<(Address, Vec<Packet>)>) {
         let mut new_req_id = new_req_id;
         let mut retries = Vec::new();
@@ -316,7 +320,8 @@ mod tests {
         assert!(!i.queue(&a(9), pkt()));
         assert_eq!(i.succeed(&a(9), 5).len(), 1);
         assert!(!i.is_pending(&a(9)));
-        assert!(i.may_start(&a(9), 6));
+        assert!(!i.may_start(&a(9), 6));
+        assert!(i.may_start(&a(9), 6 + i.config().discovery_holdoff_ms / 4));
     }
 
     #[test]

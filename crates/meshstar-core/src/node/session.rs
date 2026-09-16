@@ -152,11 +152,10 @@ impl Node {
         self.emit(NodeEvent::SessionEstablished(peer));
         self.try_pending_envelopes(peer, now);
         // A LEAF attaches to the first ANCHOR it talks to.
-        if self.cfg.role == crate::protocol::Role::Leaf && self.attached_anchor.is_none() {
-            if self.neighbors.get(&peer).map(|n| n.role == crate::protocol::Role::Anchor).unwrap_or(false) {
+        if self.cfg.role == crate::protocol::Role::Leaf && self.attached_anchor.is_none()
+            && self.neighbors.get(&peer).map(|n| n.role == crate::protocol::Role::Anchor).unwrap_or(false) {
                 self.attached_anchor = Some(peer);
             }
-        }
     }
 
     fn drain_queued(&mut self, peer: Address, queued: Vec<QueuedSend>, now: u64) {

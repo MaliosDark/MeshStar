@@ -180,13 +180,12 @@ impl Node {
                     self.enqueue_packet(hp, now, prio::DATA, true);
                 }
             }
-            (Role::Leaf, Role::Anchor) => {
-                if self.attached_anchor.is_none() {
+            (Role::Leaf, Role::Anchor)
+                if self.attached_anchor.is_none() => {
                     self.attached_anchor = Some(src);
                     // Establish the anchor session right away so FETCH works.
                     self.send_fetch(src, now);
                 }
-            }
             _ => {}
         }
     }
@@ -492,6 +491,7 @@ impl Node {
     fn handle_broadcast_data(&mut self, p: &Packet, meta: &RxMeta, now: u64) {
         let (payload, protection) = if p.header.has(flags::GROUP_ENCRYPTED) {
             let Some(k) = self.cfg.network_key.as_ref() else {
+                self.counters.rx_bad += 1; // cannot decrypt: no network key
                 return;
             };
             match crate::crypto::group_decrypt(&k.group_key(), p.header.src, p.header.packet_id, &p.header.aad(0), &p.payload) {
@@ -512,10 +512,7 @@ impl Node {
     /// Reassemble (if fragmented) and decrypt a session payload addressed to us.
     fn open_session_payload(&mut self, p: &Packet, now: u64) -> Option<Vec<u8>> {
         let src = p.header.src;
-        let (ct, frag) = match self.reassemble(p, now) {
-            Some(x) => x,
-            None => return None,
-        };
+        let (ct, frag) = self.reassemble(p, now)?;
         let aad = transport_aad(&p.header, frag);
         let Some(s) = self.sessions.get_mut(&src) else {
             self.counters.auth_failures += 1;

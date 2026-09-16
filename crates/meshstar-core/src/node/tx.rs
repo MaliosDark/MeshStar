@@ -272,6 +272,14 @@ impl Node {
                 return Some(r.next_hop);
             }
         }
+        // A LEAF never runs route discovery: its ANCHOR (or best relaying
+        // neighbour) routes on its behalf.
+        if self.cfg.role == Role::Leaf {
+            if let Some(a) = self.attached_anchor.filter(|a| self.neighbors.contains(a)) {
+                return Some(a);
+            }
+            return self.neighbors.best_relay().map(|n| n.addr);
+        }
         None
     }
 
@@ -292,22 +300,20 @@ impl Node {
         }
 
         self.beacon_seq = self.beacon_seq.wrapping_add(1);
-        let full = self.beacons_sent % self.cfg.neighbor.full_beacon_every.max(1) as u32 == 0 || self.cfg.role == Role::Leaf;
+        let full = self.beacons_sent.is_multiple_of(self.cfg.neighbor.full_beacon_every.max(1) as u32) || self.cfg.role == Role::Leaf;
         self.beacons_sent += 1;
         let mut b = Beacon::short(self.cfg.role, self.beacon_seq, self.zone.radius(), ncount.min(255) as u8);
         if full {
             b.sign(&self.id, (now / 1000) as u32);
         }
-        match self.cfg.power.mode {
-            crate::power::PowerMode::Leaf { wake_interval_s, awake_window_ms } => {
-                b.sleep_interval_s = wake_interval_s;
-                let remaining = self.power.awake_until().saturating_sub(now).min(u16::MAX as u64) as u16;
-                b.awake_window_ms = remaining.max(awake_window_ms.min(remaining.max(1)));
-                if let Some(a) = self.attached_anchor {
-                    b.attached.push(a);
-                }
+        b.sleep_interval_s = ((self.next_beacon - now).div_ceil(1000)).min(u16::MAX as u64) as u16;
+        if let crate::power::PowerMode::Leaf { wake_interval_s, awake_window_ms } = self.cfg.power.mode {
+            b.sleep_interval_s = wake_interval_s;
+            let remaining = self.power.awake_until().saturating_sub(now).min(u16::MAX as u64) as u16;
+            b.awake_window_ms = remaining.max(awake_window_ms.min(remaining.max(1)));
+            if let Some(a) = self.attached_anchor {
+                b.attached.push(a);
             }
-            _ => {}
         }
         if self.cfg.role == Role::Anchor {
             b.mailbox_available = self.mailbox.as_ref().map(|m| m.has_space()).unwrap_or(false);
@@ -648,6 +654,7 @@ impl Node {
     }
 
     /// Learn / refresh a route from observed traffic.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn learn_route(&mut self, dst: Address, next_hop: Address, hops: u8, cost: u16, source: RouteSource, via_anchor: Option<Address>, now: u64) {
         if dst == self.address() || dst.is_broadcast() || next_hop == self.address() {
             return;

@@ -60,6 +60,9 @@ pub struct Beacon {
     pub zone_radius: u8,
     pub neighbor_count: u8,
     pub battery_percent: u8,
+    /// Seconds until the sender's next announcement: the beacon interval
+    /// (adaptive) for NORMAL/ANCHOR, the wake interval for a LEAF. Receivers
+    /// derive the neighbour timeout from it.
     pub sleep_interval_s: u16,
     /// How long the sender stays awake after this beacon, ms (LEAF).
     pub awake_window_ms: u16,
