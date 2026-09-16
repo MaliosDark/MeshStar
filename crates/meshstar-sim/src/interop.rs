@@ -47,6 +47,11 @@ impl ForeignKind {
     }
 }
 
+/// Frame queued at a foreign node: (due, frame, hop, origin time, origin id).
+type PendingFrame = (u64, Vec<u8>, u8, u64, Option<u32>);
+/// A transmission in flight: x, y, frame, profile, origin time, origin id, foreign index, hop.
+type ForeignTx = (f32, f32, Vec<u8>, LoRaProfile, u64, Option<u32>, Option<usize>, u8);
+
 /// Interop scenario parameters.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct InteropParams {
@@ -97,7 +102,7 @@ pub struct ForeignSim {
     profile: LoRaProfile,
     ctx: ProtocolContext,
     seen: BTreeSet<[u8; 16]>,
-    pending: Vec<(u64, Vec<u8>, u8, u64, Option<u32>)>,
+    pending: Vec<PendingFrame>,
     tx_until: u64,
     receptions: Vec<ForeignReception>,
     pub stats: ForeignStats,
@@ -358,7 +363,7 @@ impl World {
         }
 
         // --- foreign receptions completing ---------------------------------------
-        let mut foreign_tx: Vec<(f32, f32, Vec<u8>, LoRaProfile, u64, Option<u32>, Option<usize>, u8)> = Vec::new(); // x, y, frame, profile, origin time, origin id, foreign index, hop
+        let mut foreign_tx: Vec<ForeignTx> = Vec::new();
         for i in 0..st.foreign.len() {
             let mut done = Vec::new();
             let mut k = 0;

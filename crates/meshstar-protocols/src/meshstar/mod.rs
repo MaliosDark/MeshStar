@@ -160,7 +160,7 @@ impl RadioProtocol for MeshStarAdapter {
             content_type,
             payload,
             encrypted,
-            security: if content_type == ContentType::Opaque && encrypted { security } else if encrypted { security } else { SecurityLevel::Plaintext },
+            security: if encrypted { security } else { SecurityLevel::Plaintext },
             signal: SignalMeta { rssi_dbm: Some(meta.rssi_dbm), snr_db: Some(meta.snr_db), frequency_hz: Some(ctx.profile.frequency_hz), received_at: meta.timestamp_ms },
             hops: HopMeta { hops_travelled: Some(h.hops), hops_remaining: Some(h.ttl), path: Vec::new(), relayed_by: if h.hops > 0 { Some(alloc::format!("{:04x}", h.relay)) } else { None } },
             wants_ack: h.has(flags::ACK_REQUEST),

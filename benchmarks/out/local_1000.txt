@@ -1,4 +1,1 @@
  nodes strategy            deliv%      ack%   lat p50    tx/deliv     ctrl%     util%       dup     hops
-  1000 zrp                  66.1%     62.7%   10470 ms        13.5     97.0%    408.5%     18680     1.59
-  1000 flood-protected      34.0%     26.4%   19070 ms        62.0     94.3%    451.2%     17037     2.17
-  1000 flood                67.2%     59.0%   39190 ms       355.2     77.8%   1587.1%     96840     2.59

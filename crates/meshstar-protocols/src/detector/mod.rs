@@ -76,8 +76,8 @@ impl Detector {
 
     /// All compiled-in adapters.
     pub fn with_all(network_key: Option<meshstar_core::packet::NetworkKey>, local: Option<meshstar_core::identity::Address>) -> Self {
-        let mut v: Vec<Box<dyn RadioProtocol>> = Vec::new();
-        v.push(Box::new(crate::meshstar::MeshStarAdapter::new(network_key, local)));
+        #[allow(unused_mut)]
+        let mut v: Vec<Box<dyn RadioProtocol>> = alloc::vec![Box::new(crate::meshstar::MeshStarAdapter::new(network_key, local))];
         #[cfg(feature = "meshtastic")]
         v.push(Box::new(crate::meshtastic::MeshtasticAdapter::new()));
         #[cfg(feature = "meshcore")]
@@ -98,7 +98,7 @@ impl Detector {
         self.stats.frames += 1;
         let scores: Vec<DetectionScore> = self.adapters.iter().map(|a| a.detect(frame, meta, ctx)).collect();
         let mut sorted: Vec<&DetectionScore> = scores.iter().collect();
-        sorted.sort_by(|a, b| b.score.cmp(&a.score));
+        sorted.sort_by_key(|a| core::cmp::Reverse(a.score));
         let probable = sorted.first().filter(|b| b.score >= self.cfg.probable_threshold && b.score < self.cfg.threshold).map(|b| b.protocol);
         let (protocol, score, reason) = match sorted.first() {
             Some(best) if best.score >= self.cfg.threshold => {

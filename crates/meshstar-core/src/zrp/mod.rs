@@ -18,6 +18,7 @@
 //!     - **coverage pruning**: a node does not relay if all of its relaying
 //!       neighbours are already neighbours of the transmitter (known from
 //!       the transmitter's advertised zone).
+//!
 //!   Relays record the reverse path so the reply travels back unicast.
 //!
 //! Learned routes live in [`crate::routing::RouteCache`] with a TTL.

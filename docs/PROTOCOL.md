@@ -99,12 +99,15 @@ under storm rules.
   discovery). Seals `Noise X(payload)` with prologue `dst ‖ envelope id`.
   Delivery preference: ANCHOR of the destination if known (zone / route
   metadata), else direct route, else best ANCHOR neighbour, else fail.
-* ANCHOR mailbox: bounded (entries, bytes, per destination, TTL ≤ 7 days),
-  duplicates rejected, delivery attempts bounded and spaced, garbage
-  collected every housekeeping tick. `STORE_ACCEPTED/REJECTED(reason)` tell the
-  depositor. Envelopes are opaque: the anchor sees destination, id, size.
-* LEAF: on wake, beacons (full), FETCHes from its anchor (inside a session),
-  receives DATA+ENVELOPE packets, ACKs.
+* Host mailbox (ANCHOR: large; NORMAL: small): bounded (entries, bytes, per
+  destination, TTL ≤ 7 days), a duplicate deposit is acknowledged as
+  accepted, delivery attempts bounded and spaced, garbage collected every
+  housekeeping tick. `STORE_ACCEPTED/REJECTED(reason)` tell the depositor.
+  Envelopes are opaque: the host sees destination, id, size. A host that no
+  longer hears the leaf forwards its mail to the leaf's current host.
+* LEAF: on wake, beacons first (full, naming its host); the host flushes
+  held packets and mail; the LEAF FETCHes only if nothing arrived; it opens
+  envelopes, ACKs the sender (sealed) and its host (in-session).
 
 ## 6. Power
 

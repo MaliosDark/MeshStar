@@ -138,12 +138,13 @@ implemented in `storm`:
 ## 7. Roles in routing
 
 * **NORMAL**: full participant.
-* **ANCHOR**: full participant, preferred next hop for LEAF traffic, answers
-  discoveries for its attached LEAF nodes, holds packets addressed to a
-  sleeping LEAF neighbour until it wakes (bounded), stores envelopes.
-* **LEAF**: never relays, never floods; sends everything through its ANCHOR
-  (or best relaying neighbour); its timers pause while it sleeps; its
-  neighbours are not expired for time spent asleep.
+* **NORMAL / ANCHOR as hosts**: answer discoveries for the LEAF nodes that
+  chose them (proxy reply with the leaf's key), hold packets addressed to a
+  sleeping hosted LEAF until it wakes (bounded), store envelopes (ANCHORs
+  have the large mailbox and are the preferred hosts).
+* **LEAF**: never relays, never floods; sends everything through its host;
+  its timers pause while it sleeps; its neighbours are not expired for time
+  spent asleep; wake-ups are jittered.
 
 ## 8. Parameters
 

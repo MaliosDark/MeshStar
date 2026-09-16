@@ -48,7 +48,7 @@ fn main() {
     let attached: Vec<Option<usize>> = (0..w.nodes.len()).map(|i| w.nodes[i].node.diagnostics().attached_anchor.map(|a| w.index[&a])).collect();
     for (i, n) in w.nodes.iter().enumerate() {
         if let Some(m) = n.node.mailbox() {
-            if m.len() > 0 {
+            if !m.is_empty() {
                 let d: Vec<String> = m.entries().iter().map(|e| { let li = w.index[&e.dst]; format!("leaf{}(nb={},att={},tries={})", li, n.node.neighbors().contains(&e.dst), attached[li] == Some(i), e.delivery_attempts) }).collect();
                 println!("host {} ({}) holds {:?}", i, n.role.name(), d);
             }

@@ -56,8 +56,8 @@ fn multi_hop_chain_discovery_and_delivery() {
     assert!(m.nodes[first].counters().rreq_sent >= 1);
     assert!(m.nodes[first].routes().lookup(&dst, m.now).is_some());
     // Middle nodes relayed the unicast exactly along the chain.
-    for i in 1..5 {
-        assert!(m.nodes[ids[i]].counters().relayed >= 1, "node {} relayed nothing", i);
+    for (i, &id) in ids.iter().enumerate().take(5).skip(1) {
+        assert!(m.nodes[id].counters().relayed >= 1, "node {} relayed nothing", i);
     }
 }
 
