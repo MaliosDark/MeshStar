@@ -11,7 +11,14 @@ set -euo pipefail
 PORT="${1:-/dev/ttyUSB0}"
 OUT="$(cd "$(dirname "$0")/.." && pwd)/firmware-dump"
 mkdir -p "$OUT"
+# esptool/pyserial are installed in the invoking user's ~/.local; make them
+# visible when running under sudo too.
+if [ -n "${SUDO_USER:-}" ]; then
+  USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  export PYTHONPATH="$(ls -d "$USER_HOME"/.local/lib/python3*/site-packages 2>/dev/null | head -1)${PYTHONPATH:+:$PYTHONPATH}"
+fi
 PY=python3
+$PY -c "import esptool, serial" 2>/dev/null || { echo "esptool/pyserial not found: run  python3 -m pip install --user esptool pyserial"; exit 1; }
 ESPTOOL="$PY -m esptool --port $PORT --baud 921600"
 
 echo "== chip info"

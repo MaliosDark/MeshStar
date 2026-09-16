@@ -7,7 +7,8 @@ The serial port (`/dev/ttyUSB0`, group `dialout`) is not readable by the user
 account running Claude, so the backup has to be started manually:
 
 ```bash
-sudo tools/dump_heltec.sh            # read-only; creates the files listed below
+sg dialout -c tools/dump_heltec.sh   # read-only; no sudo needed once you are in the dialout group
+# (or: sudo tools/dump_heltec.sh)
 # afterwards, optionally, so that future sessions can talk to the board without sudo:
 sudo usermod -aG dialout "$USER" && newgrp dialout
 ```
