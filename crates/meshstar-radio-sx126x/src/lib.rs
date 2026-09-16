@@ -319,7 +319,7 @@ where
         self.cmd(op::SET_CAD_PARAMS, &[0x02, det_peak, det_min, 0x00, 0x00, 0x00, 0x00])?;
         self.clear_irq(0xFFFF)?;
         self.cmd(op::SET_CAD, &[])?;
-        let budget_ms = (4 * profile.symbol_time_us() / 1000 + 5) as u32;
+        let budget_ms = 4 * profile.symbol_time_us() / 1000 + 5;
         for _ in 0..budget_ms.max(1) * 2 {
             let s = self.irq_status()?;
             if s & irq::CAD_DONE != 0 {
