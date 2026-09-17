@@ -77,6 +77,14 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
 7. Modelado de flooding gestionado de Meshtastic y repetidores MeshCore con más fidelidad en el
    simulador (hoy: flood genérico con tope de saltos).
 8. Persistencia de estado en el firmware (identidad ya se guarda; falta buzón/rutas).
+12. **Trazado de rutas, posiciones y mapa** (2026-09-17): `Node::trace` / control TRACE
+   (los relés estampan su id corto; probado en cadena y a través de un relay, y en hardware
+   nodo a nodo), mensajes con `via` (último relay MeshStar / hashes de repetidores MeshCore),
+   posiciones (difusión MeshStar `[0x01][lat][lon]` desde el GPS del móvil; Meshtastic y
+   MeshCore por sus anuncios), app: ajustes del nodo persistentes (nombre, rol, perfil,
+   potencia, beacon, modo de radio), pestaña Map (flutter_map/OSM), detalle de burbuja,
+   notificaciones, icono, reconexión rápida. Pendiente: reflashear el Specter con el
+   código de trace; prueba física con nodos fuera de alcance.
 11. **MeshStar Relay para el Specter DX-LR30** (2026-09-16): motor `meshstar_core::relay`
    (test de integración: dos nodos fuera de alcance hablan a través de uno), identidad sin
    firma + feature `tiny` + `SmallMap` en las tablas del core (de 172 KB a 45 KB de flash;

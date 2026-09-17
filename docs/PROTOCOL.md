@@ -126,3 +126,14 @@ under storm rules.
 
 See `protocol/mod.rs`: version 1, MAX_FRAME 255, MAX_TTL 255, DEFAULT_TTL 32,
 ADDRESS_LEN 8, TAG_LEN 16, NET_TAG_LEN 4, DISCOVERY_TTL_STEPS [4, 12, 32].
+
+## Route trace
+
+`CONTROL` packets with a plaintext body `[TRACE_REQ=10][short id u16 BE]*`
+are stamped by every relay that forwards them (its own 16-bit short id
+appended, at most 24) and answered by the destination with
+`[TRACE_REP=11]` plus the recorded list, routed back like any unicast. A
+relay-only node answers a trace aimed at itself the same way. It is a
+diagnostic (unauthenticated, like a traceroute): it reveals the relays a
+route uses and the round trip, nothing more. Validated on hardware node to
+node (2.6 s round trip at SF8) and in tests through relays and chains.
