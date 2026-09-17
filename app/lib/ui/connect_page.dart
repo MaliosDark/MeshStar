@@ -49,7 +49,15 @@ class _ConnectPageState extends State<ConnectPage> {
           ]),
           if (link.error != null) Padding(padding: const EdgeInsets.all(12), child: Text(link.error!, style: const TextStyle(color: Colors.redAccent))),
           if (link.state == LinkState.connecting || link.state == LinkState.reconnecting)
-            const Padding(padding: EdgeInsets.all(12), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)), SizedBox(width: 10), Text('Connecting…')])),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 10),
+                Text(link.state == LinkState.reconnecting ? 'Reconnecting to your node…' : 'Connecting…'),
+                TextButton(onPressed: link.disconnect, child: const Text('stop')),
+              ]),
+            ),
           const SizedBox(height: 8),
           Expanded(
             child: link.found.isEmpty

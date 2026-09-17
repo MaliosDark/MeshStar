@@ -25,6 +25,11 @@ pub enum CompanionAction {
     Reboot,
     SetTime(u32),
     SetName(String),
+    GetSettings,
+    SetSettings(meshstar_companion::Settings),
+    /// Store and broadcast our position (both 0 clears it).
+    SetPosition(i32, i32),
+    Trace(Address),
 }
 
 /// A text the app wants sent on a foreign network (the firmware encodes it
@@ -117,7 +122,7 @@ impl Companion {
                     if n.sec == Sec::E2e {
                         flags |= 4;
                     }
-                    self.push(Response::Node(NodeEntry { id: to_node_id(&n.key), name: String::from(n.name.as_str()), rssi_dbm: n.rssi, snr_q: 0, security: to_security(n.sec), hops: n.hops, flags, last_seen_s: (now.saturating_sub(n.last_seen) / 1000) as u32 }));
+                    self.push(Response::Node(NodeEntry { id: to_node_id(&n.key), name: String::from(n.name.as_str()), rssi_dbm: n.rssi, snr_q: 0, security: to_security(n.sec), hops: n.hops, flags, last_seen_s: (now.saturating_sub(n.last_seen) / 1000) as u32, lat_e7: n.lat_e7, lon_e7: n.lon_e7 }));
                 }
                 self.push(Response::End { kind: req::GET_NODES });
             }
@@ -191,6 +196,27 @@ impl Companion {
                 return (CompanionAction::SetTime(unix_s), None);
             }
             Request::Reboot => return (CompanionAction::Reboot, None),
+            Request::GetSettings => return (CompanionAction::GetSettings, None),
+            Request::SetPosition { lat_e7, lon_e7 } => {
+                self.push(Response::End { kind: req::SET_POSITION });
+                return (CompanionAction::SetPosition(lat_e7, lon_e7), None);
+            }
+            Request::Trace { to } => match to {
+                NodeId::MeshStar(a) => match node.trace(Address(a)) {
+                    Ok(()) => return (CompanionAction::Trace(Address(a)), None),
+                    Err(_) => self.push(Response::Trace { to, reached: false, hops: Vec::new(), rtt_ms: 0 }),
+                },
+                _ => self.push(Response::Error { code: err::UNSUPPORTED, text: "trace is a MeshStar feature".into() }),
+            },
+            Request::SetSettings(st) => {
+                let name: String = st.name.chars().filter(|c| !c.is_control()).take(31).collect();
+                if name.trim().is_empty() || st.role > 2 || st.profile > 3 || !(-9..=22).contains(&st.tx_power_dbm) || !(30..=3600).contains(&st.beacon_interval_s) {
+                    self.push(Response::Error { code: err::BAD_FRAME, text: "settings out of range".into() });
+                } else {
+                    self.push(Response::End { kind: req::SET_SETTINGS });
+                    return (CompanionAction::SetSettings(meshstar_companion::Settings { name, ..st }), None);
+                }
+            }
             Request::Ping(n) => self.push(Response::Pong(n)),
         }
         (CompanionAction::None, None)
@@ -248,10 +274,34 @@ impl Companion {
         self.push(r);
     }
 
+    /// A trace finished: resolve the relays' short ids against what the
+    /// node knows (unknown ones are sent as `00..00xxxx`).
+    pub fn on_trace(&mut self, node: &Node, dst: Address, reached: bool, hops: &[u16], rtt_ms: u64) {
+        let resolve = |s: u16| -> NodeId {
+            if let Some(n) = node.neighbors().iter().find(|n| n.addr.short() == s) {
+                return NodeId::MeshStar(n.addr.0);
+            }
+            if let Some(z) = node.zone().iter().find(|z| z.addr.short() == s) {
+                return NodeId::MeshStar(z.addr.0);
+            }
+            if let Some(r) = node.routes().iter().find(|r| r.dst.short() == s) {
+                return NodeId::MeshStar(r.dst.0);
+            }
+            let b = s.to_be_bytes();
+            NodeId::MeshStar([0, 0, 0, 0, 0, 0, b[0], b[1]])
+        };
+        self.push(Response::Trace { to: NodeId::MeshStar(dst.0), reached, hops: hops.iter().map(|s| resolve(*s)).collect(), rtt_ms: rtt_ms as u32 });
+    }
+
     /// Report a foreign send as done (sent on air; foreign networks have no
     /// end-to-end ack we can observe).
     pub fn foreign_sent(&mut self, handle: u32, ok: bool) {
         self.push(Response::DeliveryUpdate { handle, state: if ok { Delivery::Sent } else { Delivery::Failed }, reason: if ok { 0 } else { err::BUSY } });
+    }
+
+    /// Answer GET_SETTINGS.
+    pub fn settings(&mut self, st: &meshstar_companion::Settings) {
+        self.push(Response::Settings(st.clone()));
     }
 
     pub fn mode_changed(&mut self, mode: Mode) {
@@ -306,7 +356,7 @@ fn to_security(s: Sec) -> Security {
 }
 
 fn to_message(m: &ui::UiMsg, now: u64) -> Message {
-    Message { seq: m.seq, from: to_node_id(&m.from_id), from_name: String::from(m.from.as_str()), channel: String::from(m.channel.as_str()), text: String::from(m.text.as_str()), security: to_security(m.sec), rssi_dbm: m.rssi, snr_q: 0, hops: m.hops, age_s: (now.saturating_sub(m.at) / 1000) as u32 }
+    Message { seq: m.seq, from: to_node_id(&m.from_id), from_name: String::from(m.from.as_str()), channel: String::from(m.channel.as_str()), text: String::from(m.text.as_str()), security: to_security(m.sec), rssi_dbm: m.rssi, snr_q: 0, hops: m.hops, age_s: (now.saturating_sub(m.at) / 1000) as u32, via: String::from(m.via.as_str()) }
 }
 
 #[allow(dead_code)]

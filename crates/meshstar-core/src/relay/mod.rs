@@ -427,9 +427,18 @@ impl<R: RngCore, I: RelayIdentity> Relay<R, I> {
                     self.forward_unicast(p, prev, &meta, now);
                 }
             }
+            PacketType::Control if for_me && p.payload.first() == Some(&control::TRACE_REQ) => {
+                // A trace aimed at the relay itself: answer with the path so far.
+                let mut body = Vec::with_capacity(p.payload.len());
+                body.push(control::TRACE_REP);
+                body.extend_from_slice(&p.payload[1..]);
+                let ttl = self.ttl_for(&src);
+                let h = self.base_header(PacketType::Control, src, ttl);
+                let _ = self.route_unicast(Packet::new(h, body), now);
+            }
             _ => {
                 // Handshake, ACK, STORE, FETCH, CONTROL: relayed like data,
-                // never handled (nothing is ever addressed to a relay).
+                // never handled (nothing else is addressed to a relay).
                 if !for_me && !bcast {
                     self.forward_unicast(p, prev, &meta, now);
                 }
@@ -529,6 +538,9 @@ impl<R: RngCore, I: RelayIdentity> Relay<R, I> {
                 p.header.hops = p.header.hops.saturating_add(1);
                 p.header.next_hop = nh.short();
                 p.header.relay = me.short();
+                if p.header.ptype == PacketType::Control && p.payload.first() == Some(&control::TRACE_REQ) && p.payload.len() < 1 + 2 * control::TRACE_MAX_HOPS {
+                    p.payload.extend_from_slice(&me.short().to_be_bytes());
+                }
                 self.routes.touch(&dst, &nh, now);
                 let jitter = (self.rng.next_u32() % self.cfg.unicast_forward_jitter_ms.max(1)) as u64;
                 self.track_hop(&p, nh, now + jitter);

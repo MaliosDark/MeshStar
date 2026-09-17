@@ -18,6 +18,13 @@ use crate::storm::{forward_delay_ms, forward_percent, roll_percent};
 use crate::transport::{ack_status, Ack};
 use crate::zrp::messages::{rrep_flags, rreq_flags, RouteError, RouteReply, RouteRequest};
 
+/// A relay forwarding a trace request appends its short id (bounded).
+pub(crate) fn trace_stamp(p: &mut Packet, me: Address) {
+    if p.header.ptype == PacketType::Control && p.payload.first() == Some(&control::TRACE_REQ) && p.payload.len() < 1 + 2 * control::TRACE_MAX_HOPS {
+        p.payload.extend_from_slice(&me.short().to_be_bytes());
+    }
+}
+
 impl Node {
     /// Feed a received frame.
     pub fn on_radio_rx(&mut self, frame: &[u8], meta: RxMeta) {
@@ -170,6 +177,7 @@ impl Node {
                         PacketType::Ack => self.handle_ack(&p, now),
                         PacketType::Store => self.handle_store(&p, now),
                         PacketType::Fetch => self.handle_fetch(&p, now),
+                        PacketType::Control if matches!(p.payload.first(), Some(&control::TRACE_REQ) | Some(&control::TRACE_REP)) => self.handle_trace(&p, now),
                         _ => self.handle_control(&p, now),
                     }
                 } else if !bcast {
@@ -182,6 +190,14 @@ impl Node {
     }
 
     // ----- beacons -----------------------------------------------------------
+
+    /// The neighbour that relayed `p` to us, when it travelled more than one hop.
+    fn last_relay_of(&self, p: &Packet) -> Option<Address> {
+        if p.header.hops == 0 {
+            return None;
+        }
+        self.neighbors.resolve_short(p.header.relay).map(|n| n.addr)
+    }
 
     fn handle_beacon(&mut self, p: &Packet, meta: &RxMeta, now: u64) {
         let src = p.header.src;
@@ -346,6 +362,7 @@ impl Node {
                 p.header.hops = p.header.hops.saturating_add(1);
                 p.header.next_hop = nh.short();
                 p.header.relay = me.short();
+                trace_stamp(&mut p, me);
                 self.routes.touch(&dst, &nh, now);
                 let jitter = self.rng.next_u32() % (self.cfg.unicast_forward_jitter_ms.max(1));
                 self.track_hop(&p, nh, now + jitter as u64, true);
@@ -582,7 +599,7 @@ impl Node {
             (p.payload.clone(), Protection::Plaintext)
         };
         self.counters.app_received += 1;
-        self.emit(NodeEvent::MessageReceived { from: p.header.src, seq: p.header.seq, payload, protection, hops: p.header.hops, rssi_dbm: meta.rssi_dbm, snr_db: meta.snr_db });
+        self.emit(NodeEvent::MessageReceived { from: p.header.src, seq: p.header.seq, payload, protection, hops: p.header.hops, rssi_dbm: meta.rssi_dbm, snr_db: meta.snr_db, relay: self.last_relay_of(p) });
         let _ = now;
     }
 
@@ -658,7 +675,7 @@ impl Node {
                 }
                 self.counters.envelopes_opened += 1;
                 self.counters.app_received += 1;
-                self.emit(NodeEvent::MessageReceived { from, seq: p.header.seq, payload: plaintext, protection: Protection::Envelope, hops: p.header.hops, rssi_dbm: meta.rssi_dbm, snr_db: meta.snr_db });
+                self.emit(NodeEvent::MessageReceived { from, seq: p.header.seq, payload: plaintext, protection: Protection::Envelope, hops: p.header.hops, rssi_dbm: meta.rssi_dbm, snr_db: meta.snr_db, relay: self.last_relay_of(p) });
             } else {
                 self.transport.stats.duplicates_dropped += 1;
             }
@@ -700,7 +717,7 @@ impl Node {
             return;
         }
         self.counters.app_received += 1;
-        self.emit(NodeEvent::MessageReceived { from: src, seq: p.header.seq, payload: body, protection: Protection::Session, hops: p.header.hops, rssi_dbm: meta.rssi_dbm, snr_db: meta.snr_db });
+        self.emit(NodeEvent::MessageReceived { from: src, seq: p.header.seq, payload: body, protection: Protection::Session, hops: p.header.hops, rssi_dbm: meta.rssi_dbm, snr_db: meta.snr_db, relay: self.last_relay_of(p) });
     }
 
     fn handle_ack(&mut self, p: &Packet, now: u64) {
@@ -794,6 +811,30 @@ impl Node {
             n.awake_until = Some(now + 5_000);
         }
         self.flush_mailbox_to(src, now);
+    }
+
+    /// Plaintext route trace: answer a request with the recorded path, or
+    /// finish our own trace with a reply.
+    fn handle_trace(&mut self, p: &Packet, now: u64) {
+        let src = p.header.src;
+        match p.payload.first() {
+            Some(&control::TRACE_REQ) => {
+                let mut body = Vec::with_capacity(p.payload.len());
+                body.push(control::TRACE_REP);
+                body.extend_from_slice(&p.payload[1..]);
+                let ttl = self.ttl_for(&src);
+                let h = self.base_header(PacketType::Control, src, ttl);
+                let _ = self.route_unicast(Packet::new(h, body), now);
+            }
+            Some(&control::TRACE_REP) => {
+                if let Some(i) = self.pending_traces.iter().position(|(d, _)| *d == src) {
+                    let (_, started) = self.pending_traces.remove(i);
+                    let hops: Vec<u16> = p.payload[1..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+                    self.emit(NodeEvent::TraceResult { dst: src, reached: true, hops, rtt_ms: now.saturating_sub(started) });
+                }
+            }
+            _ => {}
+        }
     }
 
     fn handle_control(&mut self, p: &Packet, now: u64) {

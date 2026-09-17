@@ -49,29 +49,71 @@ use rand_core::RngCore;
 const SEED_ADDR: u32 = 0x7F_F000;
 const SEED_MAGIC: &[u8; 4] = b"MSS1";
 
-/// Node name record (same sector as the seed, after it): "MSN1" | len | utf8.
-const NAME_ADDR: u32 = SEED_ADDR + 0x100;
+/// Settings record (same sector as the seed, after it):
+/// "MSC1" | role | profile | tx_power | mode | beacon_s:u16le | name_len | name[31].
+/// An older "MSN1" name-only record is still read.
+const SETTINGS_ADDR: u32 = SEED_ADDR + 0x100;
+const SETTINGS_MAGIC: &[u8; 4] = b"MSC1";
 const NAME_MAGIC: &[u8; 4] = b"MSN1";
 
-fn load_name(flash: &mut FlashStorage) -> Option<alloc::string::String> {
-    let mut buf = [0u8; 36];
-    flash.read(NAME_ADDR, &mut buf).ok()?;
-    if &buf[..4] != NAME_MAGIC {
-        return None;
-    }
-    let n = (buf[4] as usize).min(31);
-    core::str::from_utf8(&buf[5..5 + n]).ok().map(alloc::string::String::from)
+use meshstar_companion::{Mode, Settings};
+
+fn default_settings(addr: &meshstar_core::identity::Address) -> Settings {
+    Settings { name: alloc::format!("MeshStar-{:02X}{:02X}", addr.0[6], addr.0[7]), role: 0, profile: 0, tx_power_dbm: 14, mode: Mode::Native, beacon_interval_s: 120 }
 }
 
-fn save_name(flash: &mut FlashStorage, name: &str) {
-    let mut buf = [0xFFu8; 36];
-    buf[..4].copy_from_slice(NAME_MAGIC);
-    let n = name.len().min(31);
-    buf[4] = n as u8;
-    buf[5..5 + n].copy_from_slice(&name.as_bytes()[..n]);
-    if let Err(e) = flash.write(NAME_ADDR, &buf) {
-        log::warn!("name save failed {:?}", e);
+fn load_settings(flash: &mut FlashStorage, addr: &meshstar_core::identity::Address) -> Settings {
+    let mut d = default_settings(addr);
+    let mut buf = [0u8; 42];
+    if flash.read(SETTINGS_ADDR, &mut buf).is_err() {
+        return d;
     }
+    if &buf[..4] == SETTINGS_MAGIC {
+        d.role = buf[4].min(2);
+        d.profile = buf[5].min(3);
+        d.tx_power_dbm = buf[6] as i8;
+        d.mode = Mode::from_u8(buf[7]).unwrap_or(Mode::Native);
+        d.beacon_interval_s = u16::from_le_bytes([buf[8], buf[9]]).clamp(30, 3600);
+        let n = (buf[10] as usize).min(31);
+        if let Ok(name) = core::str::from_utf8(&buf[11..11 + n]) {
+            if !name.trim().is_empty() {
+                d.name = alloc::string::String::from(name);
+            }
+        }
+    } else if &buf[..4] == NAME_MAGIC {
+        let n = (buf[4] as usize).min(31);
+        if let Ok(name) = core::str::from_utf8(&buf[5..5 + n]) {
+            d.name = alloc::string::String::from(name);
+        }
+    }
+    d
+}
+
+fn save_settings(flash: &mut FlashStorage, st: &Settings) {
+    let mut buf = [0xFFu8; 42];
+    buf[..4].copy_from_slice(SETTINGS_MAGIC);
+    buf[4] = st.role;
+    buf[5] = st.profile;
+    buf[6] = st.tx_power_dbm as u8;
+    buf[7] = st.mode as u8;
+    buf[8..10].copy_from_slice(&st.beacon_interval_s.to_le_bytes());
+    let n = st.name.len().min(31);
+    buf[10] = n as u8;
+    buf[11..11 + n].copy_from_slice(&st.name.as_bytes()[..n]);
+    if let Err(e) = flash.write(SETTINGS_ADDR, &buf) {
+        log::warn!("settings save failed {:?}", e);
+    }
+}
+
+fn profile_for(st: &Settings) -> LoRaProfile {
+    let mut p = match st.profile {
+        1 => LoRaProfile::MESHSTAR_EU868_LONG,
+        2 => LoRaProfile::MESHSTAR_EU868_FAST,
+        3 => LoRaProfile::MESHSTAR_US915,
+        _ => LoRaProfile::MESHSTAR_EU868,
+    };
+    p.tx_power_dbm = st.tx_power_dbm.clamp(-9, 22);
+    p
 }
 
 fn now_ms() -> u64 {
@@ -139,16 +181,21 @@ fn main() -> ! {
     let dev = ExclusiveDevice::new_no_delay(spi, esp_hal::gpio::NoPin).expect("spi device");
     let mut radio = Sx126x::new(dev, nss, rst, busy, dio1, Delay::new(), BoardConfig::HELTEC_V3);
     radio.init().expect("sx1262 init");
-    let profile = LoRaProfile::MESHSTAR_EU868;
+    // Settings saved by the app (name, role, profile, power, mode, beacons).
+    let settings = load_settings(&mut flash, &identity.address());
+    let profile = profile_for(&settings);
     radio.configure(&profile).expect("sx1262 configure");
     radio.start_receive().expect("rx");
 
     // Node.
-    let mut cfg = NodeConfig::default();
+    let mut cfg = match settings.role {
+        1 => NodeConfig::leaf(settings.beacon_interval_s.max(30), 8_000),
+        2 => NodeConfig::anchor(),
+        _ => NodeConfig::default(),
+    };
     cfg.profile = profile;
-    // Name: saved by the app, else "MeshStar-XXXX" from the address.
-    let a = identity.address();
-    cfg.name = load_name(&mut flash).unwrap_or_else(|| alloc::format!("MeshStar-{:02X}{:02X}", a.0[6], a.0[7]));
+    cfg.neighbor.beacon_interval_ms = settings.beacon_interval_s as u64 * 1000;
+    cfg.name = settings.name.clone();
     let mut node = Node::new(cfg, identity, rng_from_seed(rng_seed), now_ms());
     println!("MeshStar {} role {} profile {}", node.address(), node.role().name(), profile);
 
@@ -226,7 +273,17 @@ fn main() -> ! {
         (meshstar_protocols::model::ProtocolId::Meshtastic, compat::Compat::profile(meshstar_protocols::model::ProtocolId::Meshtastic)),
         (meshstar_protocols::model::ProtocolId::MeshCore, compat::Compat::profile(meshstar_protocols::model::ProtocolId::MeshCore)),
     ];
-    let mut scan = false;
+    let mut scan = settings.mode == Mode::Scan;
+    if let Some(mode) = match settings.mode {
+        Mode::MeshCore => Some(meshstar_protocols::model::ProtocolId::MeshCore),
+        Mode::Meshtastic => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
+        _ => None,
+    } {
+        compat.mode = Some(mode);
+        let p = compat::Compat::profile(mode);
+        let _ = radio.configure(&p).and_then(|_| radio.start_receive());
+    }
+    let mut settings = settings;
     let mut last_scan = 0u64;
     let mut scan_probes = 0u32;
     let mut scan_hits = 0u32;
@@ -238,6 +295,10 @@ fn main() -> ! {
     // connection is a session: advertise, serve until the client disconnects,
     // then start over.
     let mut companion = companion::Companion::new(concat!("v", env!("CARGO_PKG_VERSION")));
+    companion.mode = settings.mode;
+    // Our own position (from the app), broadcast every 10 minutes while set.
+    let mut my_position: Option<(i32, i32)> = None;
+    let mut last_position_tx = 0u64;
     let adv_name = alloc::format!("{}{}", meshstar_companion::ADV_NAME_PREFIX, &model.short_id[5..]);
     let ble_rx: core::cell::RefCell<Vec<u8>> = core::cell::RefCell::new(Vec::new());
     'ble: loop {
@@ -446,11 +507,20 @@ fn main() -> ! {
         // Events.
         while let Some(ev) = node.next_event() {
             match &ev {
-                NodeEvent::MessageReceived { from, payload, protection, hops, rssi_dbm, snr_db, .. } => {
-                    let text = core::str::from_utf8(&payload).unwrap_or("<binary>");
-                    println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB): {}", from, protection, hops, rssi_dbm, snr_db, text);
-                    model.push_native(*from, text, *protection, *rssi_dbm, *hops, now);
-                    led_until = now + 400;
+                NodeEvent::MessageReceived { from, payload, protection, hops, rssi_dbm, snr_db, relay, .. } => {
+                    if let Some((lat, lon)) = ui::decode_position(payload) {
+                        println!("[pos] {} at {} {}", from, lat, lon);
+                        model.set_position(&meshstar_protocols::model::IdentityRef::MeshStar(*from), lat, lon);
+                    } else {
+                        let text = core::str::from_utf8(payload).unwrap_or("<binary>");
+                        println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB, via {:?}): {}", from, protection, hops, rssi_dbm, snr_db, relay, text);
+                        model.push_native(*from, text, *protection, *rssi_dbm, *hops, *relay, now);
+                        led_until = now + 400;
+                    }
+                }
+                NodeEvent::TraceResult { dst, reached, hops, rtt_ms } => {
+                    println!("[trace] {} reached {} hops {:?} rtt {} ms", dst, reached, hops, rtt_ms);
+                    companion.on_trace(&node, *dst, *reached, hops, *rtt_ms);
                 }
                 NodeEvent::Delivered { handle, to, rtt_ms } => {
                     println!("[ack] #{} to {} in {} ms", handle, to, rtt_ms);
@@ -480,6 +550,13 @@ fn main() -> ! {
                     log::debug!("{:?}", other);
                     companion.on_event(&ev);
                 }
+            }
+        }
+        // Periodic position broadcast.
+        if let Some((lat, lon)) = my_position {
+            if now.saturating_sub(last_position_tx) >= 600_000 {
+                last_position_tx = now;
+                let _ = node.send_broadcast(&ui::encode_position(lat, lon));
             }
         }
         // Compat periodic frames (adverts) every 10 minutes.
@@ -698,6 +775,8 @@ fn main() -> ! {
                     match a {
                         companion::CompanionAction::None => {}
                         companion::CompanionAction::SetMode(m) => {
+                            settings.mode = m;
+                            save_settings(&mut flash, &settings);
                             (compat.mode, scan) = match m {
                                 meshstar_companion::Mode::Native => (None, false),
                                 meshstar_companion::Mode::MeshCore => (Some(meshstar_protocols::model::ProtocolId::MeshCore), false),
@@ -717,8 +796,38 @@ fn main() -> ! {
                         companion::CompanionAction::SetName(name) => {
                             model.name = name.chars().take(16).collect();
                             compat.set_name(&name);
-                            save_name(&mut flash, &name);
+                            settings.name = name.clone();
+                            save_settings(&mut flash, &settings);
                             println!("name: {}", name);
+                        }
+                        companion::CompanionAction::GetSettings => companion.settings(&settings),
+                        companion::CompanionAction::SetPosition(lat, lon) => {
+                            my_position = if lat == 0 && lon == 0 { None } else { Some((lat, lon)) };
+                            if let Some((lat, lon)) = my_position {
+                                let _ = node.send_broadcast(&ui::encode_position(lat, lon));
+                                last_position_tx = now;
+                            }
+                        }
+                        companion::CompanionAction::Trace(dst) => println!("[trace] started to {}", dst),
+                        companion::CompanionAction::SetSettings(st) => {
+                            println!("settings: {:?} (saving, rebooting)", st);
+                            save_settings(&mut flash, &st);
+                            // Let the END frame go out before restarting.
+                            let mut reboot_at = now_ms() + 1500;
+                            while now_ms() < reboot_at {
+                                if tx_pending.is_empty() && companion.has_outgoing() {
+                                    tx_pending = companion.take_outgoing();
+                                }
+                                if !tx_pending.is_empty() {
+                                    let n = tx_pending.len().min(20);
+                                    let _ = srv.do_work_with_notification(Some(NotificationData::new(tx_handle, &tx_pending[..n])));
+                                    tx_pending.drain(..n);
+                                } else {
+                                    let _ = srv.do_work_with_notification(None);
+                                    reboot_at = reboot_at.min(now_ms() + 300);
+                                }
+                            }
+                            esp_hal::reset::software_reset();
                         }
                     }
                 }

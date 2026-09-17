@@ -52,19 +52,25 @@ frame; decoders never panic on malformed input (fuzz-tested).
 | 0x0B | SET_TIME | unix_s:u32 → END (the node has no RTC; used for foreign timestamps) |
 | 0x0C | REBOOT | – |
 | 0x0D | PING | n:u32 → PONG |
+| 0x0E | GET_SETTINGS | – → SETTINGS |
+| 0x0F | SET_SETTINGS | name:str, role:u8 (0 normal, 1 leaf, 2 anchor), profile:u8 (0 EU868, 1 EU868 long, 2 EU868 fast, 3 US915), tx_power:i8, mode:u8, beacon_interval_s:u16 → END; the node saves them to flash and reboots |
+| 0x10 | SET_POSITION | lat_e7:i32, lon_e7:i32 (both 0 clears) → END; the node broadcasts its position on MeshStar now and every 10 min |
+| 0x11 | TRACE | to:id → TRACE when the reply arrives or after 30 s |
 
 ## Responses and events (node → app)
 
 | type | name | payload |
 |---|---|---|
 | 0x81 | INFO | version:u8, name:str, id, public_key:bytes(32), role:u8, firmware:str, freq:u32, bw:u32, sf:u8, cr:u8, power:i8, capabilities:u16 (1 MeshCore, 2 Meshtastic, 4 scan, 8 bridge, 16 store-and-forward) |
-| 0x82 | NODE | id, name:str, rssi:i16, snr_q:i8 (¼ dB), security:u8, hops:u8, flags:u8 (1 sleeping leaf, 2 anchor, 4 E2E session), last_seen_s:u32 |
+| 0x82 | NODE | id, name:str, rssi:i16, snr_q:i8 (¼ dB), security:u8, hops:u8, flags:u8 (1 sleeping leaf, 2 anchor, 4 E2E session), last_seen_s:u32, lat_e7:i32, lon_e7:i32 (0,0 = unknown) |
 | 0x83 | SEND_RESULT | handle:u32, accepted:u8, reason:u8 |
-| 0x84 | MESSAGE | seq:u32, from:id, from_name:str, channel:str, text:str, security:u8, rssi:i16, snr_q:i8, hops:u8, age_s:u32 |
+| 0x84 | MESSAGE | seq:u32, from:id, from_name:str, channel:str, text:str, security:u8, rssi:i16, snr_q:i8, hops:u8, age_s:u32, via:str (last MeshStar relay / MeshCore repeater hashes / Meshtastic relay byte; empty = direct) |
 | 0x85 | DELIVERY | handle:u32, state:u8 (0 queued, 1 sent, 2 hop-acked, 3 delivered, 4 stored at anchor, 5 failed), reason:u8 |
 | 0x86 | NETWORK | proto:u8, name:str, nodes:u8, rssi:i16, frames:u32, last_seen_s:u32 (0xFFFFFFFF never) |
 | 0x87 | STATUS | mode:u8, battery_mv:u16, uptime_s:u32, neighbors:u8, zone:u8, sessions:u8, rx:u32, tx:u32, duty_permille:u16, unread:u8, last_rssi:i16, last_snr_q:i8 |
 | 0x88 | EVENT | kind:u8 (1 neighbour up, 2 down, 3 session established, 4 route found + hops:u8, 5 route lost, 6 mode changed + mode:u8), id where applicable |
+| 0x89 | SETTINGS | as SET_SETTINGS |
+| 0x8A | TRACE | to:id, reached:u8, rtt_ms:u32, n:u8, hop ids (a MeshStar id with six zero bytes is an unresolved 16-bit short id) |
 | 0x8D | PONG | n:u32 |
 | 0x8F | END | kind:u8 (the request type that produced the list) |
 | 0xFF | ERROR | code:u8 (1 bad frame, 2 unknown request, 3 no route, 4 queue full, 5 unsupported, 6 busy, 10 no ack, 11 no session, 12 no key, 13 too large, 14 rejected), text:str |

@@ -6,6 +6,7 @@ import 'state/store.dart';
 import 'ui/chats_page.dart';
 import 'ui/connect_page.dart';
 import 'ui/device_page.dart';
+import 'ui/map_page.dart';
 import 'ui/networks_page.dart';
 import 'ui/nodes_page.dart';
 import 'ui/widgets.dart';
@@ -43,8 +44,25 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell> {
+class _ShellState extends State<Shell> with WidgetsBindingObserver {
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    context.read<Store>().inForeground = state == AppLifecycleState.resumed;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,8 +71,8 @@ class _ShellState extends State<Shell> {
     if (link.state != LinkState.connected && store.info == null) {
       return const ConnectPage();
     }
-    final pages = const [ChatsPage(), NodesPage(), NetworksPage(), DevicePage()];
-    final titles = ['Chats', 'Nodes', 'Networks', store.info?.name ?? 'Device'];
+    final pages = const [ChatsPage(), NodesPage(), MapPage(), NetworksPage(), DevicePage()];
+    final titles = ['Chats', 'Nodes', 'Map', 'Networks', store.info?.name ?? 'Device'];
     final connected = link.state == LinkState.connected;
     return Scaffold(
       appBar: AppBar(
@@ -77,6 +95,7 @@ class _ShellState extends State<Shell> {
         destinations: [
           NavigationDestination(icon: Badge(isLabelVisible: store.unreadTotal > 0, label: Text('${store.unreadTotal}'), child: const Icon(Icons.forum_outlined)), selectedIcon: const Icon(Icons.forum), label: 'Chats'),
           NavigationDestination(icon: Badge(isLabelVisible: store.nodes.isNotEmpty, label: Text('${store.nodes.length}'), child: const Icon(Icons.hub_outlined)), selectedIcon: const Icon(Icons.hub), label: 'Nodes'),
+          const NavigationDestination(icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map), label: 'Map'),
           const NavigationDestination(icon: Icon(Icons.radar_outlined), selectedIcon: Icon(Icons.radar), label: 'Networks'),
           const NavigationDestination(icon: Icon(Icons.memory_outlined), selectedIcon: Icon(Icons.memory), label: 'Device'),
         ],

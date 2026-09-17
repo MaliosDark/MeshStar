@@ -409,3 +409,20 @@ fn corrupted_ciphertext_and_forged_signature_are_rejected() {
     assert_eq!(m.nodes[b].neighbors().rejected_beacons, rejected_before + 1);
     assert!(m.nodes[b].neighbors().get(&spoofed_src).unwrap().identity.as_ref().map(|i| i.address()) == Some(spoofed_src));
 }
+
+#[test]
+fn trace_along_a_chain_lists_every_relay() {
+    let mut m = Medium::new();
+    let ids: Vec<usize> = (0..4).map(|i| m.add(fast_config(), 60 + i as u8)).collect();
+    m.chain(&ids);
+    m.run(8_000);
+    let dst = m.nodes[ids[3]].address();
+    m.nodes[ids[0]].trace(dst).unwrap();
+    m.run(15_000);
+    let hops = m.events_of(ids[0]).into_iter().find_map(|e| if let NodeEvent::TraceResult { reached: true, hops, .. } = e { Some(hops.clone()) } else { None }).expect("trace");
+    assert_eq!(hops, vec![m.nodes[ids[1]].address().short(), m.nodes[ids[2]].address().short()]);
+    // A trace to an unreachable address times out with reached = false.
+    m.nodes[ids[0]].trace(meshstar_core::identity::Address([9; 8])).unwrap();
+    m.run(120_000);
+    assert!(m.events_of(ids[0]).iter().any(|e| matches!(e, NodeEvent::TraceResult { reached: false, .. })));
+}

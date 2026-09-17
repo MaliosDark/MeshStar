@@ -5,6 +5,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ble/link.dart';
@@ -12,13 +14,15 @@ import '../protocol/companion.dart' as p;
 
 /// A chat line, ours or theirs.
 class ChatMessage {
-  ChatMessage({required this.thread, required this.text, required this.mine, required this.at, this.from, this.fromName = '', this.security = p.Security.none, this.rssiDbm = 0, this.hops = 0, this.handle, this.delivery = p.Delivery.queued, this.reason = 0, this.seq});
+  ChatMessage({required this.thread, required this.text, required this.mine, required this.at, this.from, this.fromName = '', this.security = p.Security.none, this.rssiDbm = 0, this.hops = 0, this.handle, this.delivery = p.Delivery.queued, this.reason = 0, this.seq, this.via = ''});
   final String thread;
   final String text;
   final bool mine;
   final DateTime at;
   final p.NodeId? from;
   final String fromName;
+  /// Path as the protocol reports it (last relay / repeater hashes).
+  final String via;
   final p.Security security;
   final int rssiDbm, hops;
   int? handle;
@@ -26,8 +30,8 @@ class ChatMessage {
   int reason;
   int? seq;
 
-  Map<String, dynamic> toJson() => {'t': thread, 'x': text, 'm': mine, 'a': at.millisecondsSinceEpoch, 'f': from?.toJson(), 'n': fromName, 's': security.code, 'r': rssiDbm, 'h': hops, 'd': delivery.index, 'q': seq};
-  factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(thread: j['t'], text: j['x'], mine: j['m'], at: DateTime.fromMillisecondsSinceEpoch(j['a']), from: j['f'] == null ? null : p.NodeId.fromJson(j['f']), fromName: j['n'] ?? '', security: p.Security.fromCode(j['s'] ?? 0), rssiDbm: j['r'] ?? 0, hops: j['h'] ?? 0, delivery: p.Delivery.values[j['d'] ?? 0], seq: j['q']);
+  Map<String, dynamic> toJson() => {'t': thread, 'x': text, 'm': mine, 'a': at.millisecondsSinceEpoch, 'f': from?.toJson(), 'n': fromName, 's': security.code, 'r': rssiDbm, 'h': hops, 'd': delivery.index, 'q': seq, 'v': via};
+  factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(thread: j['t'], text: j['x'], mine: j['m'], at: DateTime.fromMillisecondsSinceEpoch(j['a']), from: j['f'] == null ? null : p.NodeId.fromJson(j['f']), fromName: j['n'] ?? '', security: p.Security.fromCode(j['s'] ?? 0), rssiDbm: j['r'] ?? 0, hops: j['h'] ?? 0, delivery: p.Delivery.values[j['d'] ?? 0], seq: j['q'], via: j['v'] ?? '');
 }
 
 /// A conversation: a contact (any network) or a channel.
@@ -63,6 +67,16 @@ class Store extends ChangeNotifier {
   StreamSubscription? _sub;
   p.NodeInfo? info;
   p.Status? status;
+  p.Settings? settings;
+  /// Last trace per destination.
+  final Map<p.NodeId, p.TraceResponse> traces = {};
+  bool sharePosition = false;
+  Position? myPosition;
+  StreamSubscription<Position>? _posSub;
+  Timer? _posTimer;
+  bool inForeground = true;
+  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  bool _notificationsReady = false;
   final Map<p.NodeId, p.NodeEntry> nodes = {};
   final List<p.Network> networks = [];
   final Map<String, Thread> threads = {};
@@ -96,6 +110,9 @@ class Store extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     lastDeviceId = prefs.getString('device');
     lastSeq = prefs.getInt('lastSeq') ?? 0;
+    sharePosition = prefs.getBool('sharePosition') ?? false;
+    _initNotifications();
+    if (sharePosition) _startPosition();
     try {
       for (final j in (jsonDecode(prefs.getString('threads') ?? '[]') as List)) {
         final t = Thread.fromJson(j);
@@ -109,6 +126,7 @@ class Store extends ChangeNotifier {
     }
     notifyListeners();
     if (lastDeviceId != null) {
+      debugPrint('auto-reconnect to $lastDeviceId');
       link.connectById(lastDeviceId!);
     }
   }
@@ -125,6 +143,7 @@ class Store extends ChangeNotifier {
   void _onLinkChanged() {
     if (link.state == LinkState.connected && !_synced) {
       _synced = true;
+      _rememberDevice();
       _initialSync();
     } else if (link.state != LinkState.connected) {
       _synced = false;
@@ -133,10 +152,103 @@ class Store extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _rememberDevice() async {
+    final id = link.deviceId;
+    if (id == null) return;
+    lastDeviceId = id;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('device', id);
+  }
+
+  Future<void> _initNotifications() async {
+    try {
+      const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+      await _notifications.initialize(const InitializationSettings(android: android));
+      await _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestNotificationsPermission();
+      _notificationsReady = true;
+    } catch (e) {
+      debugPrint('notifications: $e');
+    }
+  }
+
+  Future<void> _notify(Thread t, ChatMessage m) async {
+    if (!_notificationsReady || inForeground) return;
+    try {
+      const details = NotificationDetails(android: AndroidNotificationDetails('messages', 'Messages', channelDescription: 'Incoming mesh messages', importance: Importance.high, priority: Priority.high));
+      await _notifications.show(m.seq ?? DateTime.now().millisecondsSinceEpoch & 0x7FFFFFFF, '${t.title} · ${t.proto.label}', t.channel != null ? '${m.fromName}: ${m.text}' : m.text, details);
+    } catch (e) {
+      debugPrint('notify: $e');
+    }
+  }
+
+  // ----- position sharing -----
+
+  Future<void> setSharePosition(bool on) async {
+    sharePosition = on;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('sharePosition', on);
+    if (on) {
+      await _startPosition();
+    } else {
+      _posSub?.cancel();
+      _posTimer?.cancel();
+      myPosition = null;
+      try {
+        await link.send(p.SetPosition(0, 0));
+      } catch (_) {}
+    }
+    notifyListeners();
+  }
+
+  Future<void> _startPosition() async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+        log.add('position: permission denied');
+        sharePosition = false;
+        notifyListeners();
+        return;
+      }
+      _posSub?.cancel();
+      _posSub = Geolocator.getPositionStream(locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium, distanceFilter: 25)).listen((pos) {
+        myPosition = pos;
+        notifyListeners();
+      });
+      _posTimer?.cancel();
+      _posTimer = Timer.periodic(const Duration(minutes: 5), (_) => _pushPosition());
+      Future.delayed(const Duration(seconds: 5), _pushPosition);
+    } catch (e) {
+      log.add('position: $e');
+      notifyListeners();
+    }
+  }
+
+  Future<void> _pushPosition() async {
+    final pos = myPosition;
+    if (pos == null || link.state != LinkState.connected) return;
+    try {
+      await link.send(p.SetPosition((pos.latitude * 1e7).round(), (pos.longitude * 1e7).round()));
+    } catch (_) {}
+  }
+
+  Future<void> trace(p.NodeId to) async {
+    try {
+      traces.remove(to);
+      await link.send(p.Trace(to));
+      log.add('trace to ${to.short} started');
+      notifyListeners();
+    } catch (e) {
+      log.add('trace: $e');
+      notifyListeners();
+    }
+  }
+
   Future<void> _initialSync() async {
     try {
       await link.send(p.SetTime(DateTime.now().millisecondsSinceEpoch ~/ 1000));
       await link.send(p.GetInfo());
+      await link.send(p.GetSettings());
       await link.send(p.GetStatus());
       await link.send(p.GetNodes());
       await link.send(p.GetNetworks());
@@ -165,6 +277,11 @@ class Store extends ChangeNotifier {
     switch (r) {
       case p.InfoResponse(:final info):
         this.info = info;
+      case p.SettingsResponse(:final settings):
+        this.settings = settings;
+      case p.TraceResponse():
+        traces[r.to] = r;
+        log.add(r.reached ? 'trace ${r.to.short}: ${r.hops.isEmpty ? 'direct' : r.hops.map((h) => h.short).join(' > ')} (${r.rttMs} ms)' : 'trace ${r.to.short}: no answer');
       case p.StatusResponse(:final status):
         this.status = status;
       case p.NodeResponse(:final node):
@@ -240,8 +357,10 @@ class Store extends ChangeNotifier {
       return Thread(key: key, title: isChannel ? '#${m.channel}' : (m.fromName.isNotEmpty ? m.fromName : m.from.short), proto: m.from.proto, target: isChannel ? p.NodeId.broadcast(m.from.proto) : m.from, channel: isChannel ? m.channel : null);
     });
     final at = DateTime.now().subtract(Duration(seconds: m.ageS));
-    messages.add(ChatMessage(thread: key, text: m.text, mine: false, at: at, from: m.from, fromName: m.fromName, security: m.security, rssiDbm: m.rssiDbm, hops: m.hops, seq: m.seq));
+    final cm = ChatMessage(thread: key, text: m.text, mine: false, at: at, from: m.from, fromName: m.fromName, security: m.security, rssiDbm: m.rssiDbm, hops: m.hops, seq: m.seq, via: m.via);
+    messages.add(cm);
     t.unread += 1;
+    if (m.ageS < 120) _notify(t, cm);
     t.last = at;
     t.preview = (t.channel != null ? '${m.fromName}: ' : '') + m.text;
     t.security = m.security;
@@ -303,6 +422,20 @@ class Store extends ChangeNotifier {
     }
   }
 
+  /// Save settings on the node; it reboots to apply them and the link
+  /// reconnects by itself.
+  Future<void> saveSettings(p.Settings s) async {
+    try {
+      await link.send(p.SetSettings(s));
+      settings = s;
+      log.add('settings saved, node restarting');
+      notifyListeners();
+    } catch (e) {
+      log.add('settings: $e');
+      notifyListeners();
+    }
+  }
+
   Future<void> announce() async {
     try {
       await link.send(p.Announce());
@@ -321,6 +454,8 @@ class Store extends ChangeNotifier {
   void dispose() {
     _sub?.cancel();
     _poll?.cancel();
+    _posSub?.cancel();
+    _posTimer?.cancel();
     link.removeListener(_onLinkChanged);
     super.dispose();
   }

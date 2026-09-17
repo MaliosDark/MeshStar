@@ -47,7 +47,7 @@ class NodeTile extends StatelessWidget {
         const SizedBox(height: 4),
         SecurityChip(n.security, dense: true),
       ]),
-      onTap: () => showModalBottomSheet(context: context, showDragHandle: true, builder: (_) => NodeSheet(n)),
+      onTap: () => showModalBottomSheet(context: context, showDragHandle: true, isScrollControlled: true, useSafeArea: true, builder: (_) => NodeSheet(n)),
     );
   }
 }
@@ -65,11 +65,13 @@ class NodeSheet extends StatelessWidget {
       if (n.rssiDbm != 0) ('Signal', '${n.rssiDbm} dBm, SNR ${(n.snrQ / 4).toStringAsFixed(1)} dB'),
       ('Hops', '${n.hops}'),
       ('Role', n.anchor ? 'Anchor (always on, store-and-forward mailbox)' : (n.sleeping ? 'Leaf, asleep now' : 'Node')),
-      ('Security', n.security.long),
+      ('Security', n.proto == p.Proto.meshStar ? n.security.long : (n.security == p.Security.none ? 'No message exchanged yet' : n.security.long)),
       ('Last heard', '${agoS(n.lastSeenS)} ago'),
+      if (n.hasPosition) ('Position', '${n.lat.toStringAsFixed(5)}, ${n.lon.toStringAsFixed(5)}'),
     ];
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+    final trace = context.watch<Store>().traces[n.id];
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(20, 0, 20, 24 + MediaQuery.of(context).viewInsets.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           ProtoBadge(n.proto, size: 48),
@@ -100,6 +102,20 @@ class NodeSheet extends StatelessWidget {
             ),
           ),
         ]),
+        if (n.proto == p.Proto.meshStar) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: OutlinedButton.icon(onPressed: () => context.read<Store>().trace(n.id), icon: const Icon(Icons.route_outlined), label: const Text('Trace route'))),
+          ]),
+          if (trace != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                trace.reached ? (trace.hops.isEmpty ? 'Direct, ${trace.rttMs} ms round trip' : 'me > ${trace.hops.map((h) => context.read<Store>().nodes[h]?.name ?? h.short).join(' > ')} > ${n.name}  ·  ${trace.rttMs} ms round trip') : 'No answer (no route or the node is asleep)',
+                style: TextStyle(color: trace.reached ? kStar : Colors.orangeAccent),
+              ),
+            ),
+        ],
         if (n.proto != p.Proto.meshStar)
           Padding(
             padding: const EdgeInsets.only(top: 8),

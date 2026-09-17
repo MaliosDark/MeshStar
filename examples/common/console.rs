@@ -120,6 +120,20 @@ impl Console {
                     }
                 }
             }
+            "trace" => {
+                let Some(addr) = parts.next().and_then(|a| Address::parse(a).ok()) else {
+                    let _ = writeln!(out, "usage: trace MS-xxxxxxxxxxxxxxxx");
+                    return;
+                };
+                match node.trace(addr) {
+                    Ok(()) => {
+                        let _ = writeln!(out, "trace started");
+                    }
+                    Err(e) => {
+                        let _ = writeln!(out, "error {}", e);
+                    }
+                }
+            }
             "bcast" => {
                 let text: heapless::String<128> = parts.fold(heapless::String::new(), |mut acc, p| {
                     if !acc.is_empty() {

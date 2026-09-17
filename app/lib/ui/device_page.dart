@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../ble/link.dart';
 import '../state/store.dart';
+import 'settings_page.dart';
 import 'widgets.dart';
 
 class DevicePage extends StatelessWidget {
@@ -59,6 +60,7 @@ class DevicePage extends StatelessWidget {
       ),
       const SizedBox(height: 8),
       Wrap(spacing: 8, runSpacing: 4, children: [
+        FilledButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsPage())), icon: const Icon(Icons.tune), label: const Text('Node settings')),
         OutlinedButton.icon(onPressed: () => _rename(context, store), icon: const Icon(Icons.edit_outlined), label: const Text('Rename')),
         OutlinedButton.icon(onPressed: store.refresh, icon: const Icon(Icons.refresh), label: const Text('Refresh')),
         OutlinedButton.icon(onPressed: store.forgetDevice, icon: const Icon(Icons.bluetooth_disabled), label: const Text('Disconnect')),

@@ -731,6 +731,25 @@ impl Node {
         }
     }
 
+    /// Start a route trace to `dst` (result arrives as
+    /// [`NodeEvent::TraceResult`]). Plaintext control packet that every relay
+    /// stamps with its short id; discovery runs first if there is no route.
+    pub fn trace(&mut self, dst: Address) -> Result<()> {
+        if dst == self.address() || dst.is_broadcast() {
+            return Err(Error::BadField);
+        }
+        if self.pending_traces.len() >= 4 {
+            return Err(Error::Full);
+        }
+        let now = self.now;
+        let ttl = self.ttl_for(&dst);
+        let h = self.base_header(PacketType::Control, dst, ttl);
+        let p = Packet::new(h, alloc::vec![crate::protocol::control::TRACE_REQ]);
+        self.pending_traces.retain(|(d, _)| *d != dst);
+        self.pending_traces.push((dst, now));
+        self.route_unicast(p, now)
+    }
+
     /// Plaintext, single hop, unauthenticated: only suppresses a retransmission.
     pub(crate) fn send_link_ack(&mut self, to: Address, packet_id: u32, now: u64) {
         let mut h = self.base_header(PacketType::Control, to, 1);

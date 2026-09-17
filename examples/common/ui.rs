@@ -524,6 +524,46 @@ pub struct UiNode {
     pub sleeping: bool,
     pub anchor: bool,
     pub last_seen: u64,
+    /// Degrees x 1e7; both 0 = unknown.
+    pub lat_e7: i32,
+    pub lon_e7: i32,
+}
+
+/// Application payload of a MeshStar DATA message: text, or a position
+/// record `[0x01][lat_e7 i32 BE][lon_e7 i32 BE]` (9 bytes).
+pub const APP_POSITION: u8 = 0x01;
+
+pub fn encode_position(lat_e7: i32, lon_e7: i32) -> [u8; 9] {
+    let mut b = [0u8; 9];
+    b[0] = APP_POSITION;
+    b[1..5].copy_from_slice(&lat_e7.to_be_bytes());
+    b[5..9].copy_from_slice(&lon_e7.to_be_bytes());
+    b
+}
+
+pub fn decode_position(payload: &[u8]) -> Option<(i32, i32)> {
+    if payload.len() == 9 && payload[0] == APP_POSITION {
+        Some((i32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]), i32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]])))
+    } else {
+        None
+    }
+}
+
+/// "12.3456789" -> 123456789 (degrees x 1e7).
+pub fn parse_coord_e7(s: &str) -> Option<i32> {
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s),
+    };
+    let (int, frac) = s.split_once('.').unwrap_or((s, ""));
+    let mut v: i64 = int.parse::<i64>().ok()?;
+    v *= 10_000_000;
+    let mut scale = 1_000_000i64;
+    for c in frac.bytes().take(7) {
+        v += (c.checked_sub(b'0')? as i64) * scale;
+        scale /= 10;
+    }
+    Some(if neg { -v } else { v } as i32)
 }
 
 #[derive(Clone, Debug)]
@@ -540,6 +580,8 @@ pub struct UiMsg {
     pub hops: u8,
     pub at: u64,
     pub unread: bool,
+    /// Path as the protocol tells it (last relay / repeater hashes).
+    pub via: Name,
 }
 
 #[derive(Clone, Debug)]
@@ -618,6 +660,7 @@ impl UiModel {
     /// Refresh the MeshStar entries from the node's tables.
     pub fn sync_native(&mut self, node: &Node, now: u64) {
         self.role = node.role();
+        let positions: heapless::Vec<(IdentityRef, i32, i32), 16> = self.nodes.iter().filter(|n| n.proto == Proto::Star && (n.lat_e7 != 0 || n.lon_e7 != 0)).map(|n| (n.key.clone(), n.lat_e7, n.lon_e7)).collect();
         self.nodes.retain(|n| n.proto != Proto::Star);
         let sessions = node.sessions();
         let mut count = 0u8;
@@ -625,7 +668,8 @@ impl UiModel {
             let key = IdentityRef::MeshStar(nb.addr);
             let sec = if sessions.contains_key(&nb.addr) { Sec::E2e } else { Sec::None };
             let sleeping = nb.role == Role::Leaf && nb.awake_until.map(|u| u < now).unwrap_or(true);
-            let e = UiNode { proto: Proto::Star, key, name: Self::short_addr(&nb.addr), rssi: nb.rssi_dbm as i16, sec, hops: 1, sleeping, anchor: nb.role == Role::Anchor, last_seen: nb.last_seen };
+            let (lat_e7, lon_e7) = positions.iter().find(|(k, _, _)| *k == key).map(|(_, a, b)| (*a, *b)).unwrap_or((0, 0));
+            let e = UiNode { proto: Proto::Star, key, name: Self::short_addr(&nb.addr), rssi: nb.rssi_dbm as i16, sec, hops: 1, sleeping, anchor: nb.role == Role::Anchor, last_seen: nb.last_seen, lat_e7, lon_e7 };
             count = count.saturating_add(1);
             if self.nodes.push(e).is_err() {
                 break;
@@ -634,7 +678,8 @@ impl UiModel {
         for z in node.zone().iter().filter(|z| z.distance > 1) {
             let key = IdentityRef::MeshStar(z.addr);
             let sec = if sessions.contains_key(&z.addr) { Sec::E2e } else { Sec::None };
-            let e = UiNode { proto: Proto::Star, key, name: Self::short_addr(&z.addr), rssi: 0, sec, hops: z.distance, sleeping: false, anchor: false, last_seen: now };
+            let (lat_e7, lon_e7) = positions.iter().find(|(k, _, _)| *k == key).map(|(_, a, b)| (*a, *b)).unwrap_or((0, 0));
+            let e = UiNode { proto: Proto::Star, key, name: Self::short_addr(&z.addr), rssi: 0, sec, hops: z.distance, sleeping: false, anchor: false, last_seen: now, lat_e7, lon_e7 };
             count = count.saturating_add(1);
             if self.nodes.push(e).is_err() {
                 break;
@@ -663,27 +708,46 @@ impl UiModel {
     }
 
     /// A MeshStar message arrived.
-    pub fn push_native(&mut self, from: Address, text: &str, protection: Protection, rssi: i16, hops: u8, now: u64) {
-        self.push_msg(UiMsg { seq: 0, proto: Proto::Star, from_id: IdentityRef::MeshStar(from), from: Self::short_addr(&from), channel: Name::try_from("direct").unwrap_or_default(), text: text.chars().take(96).collect(), sec: Sec::from_protection(protection), rssi, hops, at: now, unread: true });
+    pub fn push_native(&mut self, from: Address, text: &str, protection: Protection, rssi: i16, hops: u8, relay: Option<Address>, now: u64) {
+        let via = relay.map(|r| Self::short_addr(&r)).unwrap_or_default();
+        self.push_msg(UiMsg { seq: 0, proto: Proto::Star, from_id: IdentityRef::MeshStar(from), from: Self::short_addr(&from), channel: Name::try_from("direct").unwrap_or_default(), text: text.chars().take(96).collect(), sec: Sec::from_protection(protection), rssi, hops, at: now, unread: true, via });
+    }
+
+    /// A node told us where it is.
+    pub fn set_position(&mut self, key: &IdentityRef, lat_e7: i32, lon_e7: i32) {
+        if let Some(n) = self.nodes.iter_mut().find(|n| n.key == *key) {
+            n.lat_e7 = lat_e7;
+            n.lon_e7 = lon_e7;
+        }
     }
 
     /// A frame decoded by the compatibility layer.
     pub fn observe_foreign(&mut self, m: &UnifiedMessage, rssi: i16, now: u64) {
         let proto = Proto::from_id(m.protocol);
         let name: Name = m.meta("long_name").or(m.meta("name")).or(m.meta("sender_name")).map(|s| s.chars().take(16).collect()).unwrap_or_else(|| Self::short_ref(&m.source));
-        let sec = Sec::from_level(&m.security);
-        if !m.source.is_broadcast() {
+        // A copy of our own channel text relayed by a foreign repeater.
+        if m.content_type == ContentType::Text && name == self.name {
+            return;
+        }
+        // Announcements are public by design: they set no security label.
+        let sec = match m.content_type {
+            ContentType::Advert | ContentType::NodeInfo => Sec::None,
+            _ => Sec::from_level(&m.security),
+        };
+        // MeshCore channel texts carry no sender hash: nothing to list as a node.
+        let anonymous = matches!(&m.source, IdentityRef::MeshCore(meshstar_protocols::model::MeshCoreId::HashPrefix(h)) if h.is_empty());
+        if !m.source.is_broadcast() && !anonymous {
             if let Some(n) = self.nodes.iter_mut().find(|n| n.key == m.source) {
                 n.rssi = rssi;
                 n.last_seen = now;
                 if m.meta("long_name").or(m.meta("name")).or(m.meta("sender_name")).is_some() {
                     n.name = name.clone();
                 }
-                if sec != Sec::Opaque || n.sec == Sec::None {
+                if sec != Sec::None && (sec != Sec::Opaque || n.sec == Sec::None) {
                     n.sec = sec;
                 }
             } else {
-                let e = UiNode { proto, key: m.source.clone(), name: name.clone(), rssi, sec, hops: m.hops.hops_travelled.unwrap_or(0), sleeping: false, anchor: false, last_seen: now };
+                let e = UiNode { proto, key: m.source.clone(), name: name.clone(), rssi, sec, hops: m.hops.hops_travelled.unwrap_or(0), sleeping: false, anchor: false, last_seen: now, lat_e7: 0, lon_e7: 0 };
                 if self.nodes.is_full() {
                     // Drop the oldest foreign entry.
                     if let Some(i) = self.nodes.iter().enumerate().filter(|(_, n)| n.proto != Proto::Star).min_by_key(|(_, n)| n.last_seen).map(|(i, _)| i) {
@@ -691,6 +755,11 @@ impl UiModel {
                     }
                 }
                 let _ = self.nodes.push(e);
+            }
+            if let (Some(lat), Some(lon)) = (m.meta("lat").and_then(parse_coord_e7), m.meta("lon").and_then(parse_coord_e7)) {
+                if lat != 0 || lon != 0 {
+                    self.set_position(&m.source, lat, lon);
+                }
             }
             self.sort_nodes();
         }
@@ -710,7 +779,9 @@ impl UiModel {
         }
         if m.content_type == ContentType::Text {
             if let Some(t) = m.text_payload() {
-                self.push_msg(UiMsg { seq: 0, proto, from_id: m.source.clone(), from: name, channel: chan, text: t.chars().take(96).collect(), sec, rssi, hops: m.hops.hops_travelled.unwrap_or(0), at: now, unread: true });
+                let via: Name = m.hops.path.iter().map(|h| h.trim_start_matches("0x")).collect::<alloc::vec::Vec<_>>().join(",").chars().take(16).collect();
+                let via = if via.is_empty() { m.hops.relayed_by.as_deref().unwrap_or("").trim_start_matches("0x").chars().take(16).collect() } else { via };
+                self.push_msg(UiMsg { seq: 0, proto, from_id: m.source.clone(), from: name, channel: chan, text: t.chars().take(96).collect(), sec, rssi, hops: m.hops.hops_travelled.unwrap_or(0), at: now, unread: true, via });
             }
         }
     }

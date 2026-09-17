@@ -101,7 +101,9 @@ class _Bubble extends StatelessWidget {
     };
     return Align(
       alignment: m.mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: GestureDetector(
+        onTap: () => _details(context),
+        child: Container(
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
         margin: const EdgeInsets.symmetric(vertical: 3),
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
@@ -117,7 +119,52 @@ class _Bubble extends StatelessWidget {
             Text(time, style: Theme.of(context).textTheme.labelSmall),
             if (m.mine) ...[const SizedBox(width: 4), delivery],
             if (m.mine && m.delivery == p.Delivery.failed) Padding(padding: const EdgeInsets.only(left: 4), child: Text(p.errorText(m.reason), style: const TextStyle(fontSize: 10, color: Colors.redAccent))),
+            if (!m.mine && (m.via.isNotEmpty || m.hops > 0)) const Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.alt_route, size: 13)),
           ]),
+        ]),
+      ),
+      ),
+    );
+  }
+
+  void _details(BuildContext context) {
+    final store = context.read<Store>();
+    final fromNode = m.from == null ? null : store.nodes[m.from!];
+    final path = m.mine
+        ? null
+        : (m.via.isEmpty ? (m.hops == 0 ? 'Direct (heard from the sender)' : '${m.hops} hop${m.hops == 1 ? '' : 's'}, relay unknown') : '${m.hops} hop${m.hops == 1 ? '' : 's'} · via ${m.via}');
+    final rows = <(String, String)>[
+      ('From', m.mine ? 'me' : '${m.fromName.isNotEmpty ? m.fromName : ''} ${m.from?.canonical ?? ''}'.trim()),
+      if (path != null) ('Path', path),
+      if (!m.mine && m.rssiDbm != 0) ('Signal', '${m.rssiDbm} dBm at the last hop'),
+      ('Security', m.security.long),
+      ('Time', DateFormat.yMd().add_Hms().format(m.at)),
+      if (m.mine) ('Delivery', '${m.delivery.name}${m.reason != 0 ? ' (${p.errorText(m.reason)})' : ''}'),
+      if (fromNode != null && fromNode.hasPosition) ('Sender position', '${fromNode.lat.toStringAsFixed(5)}, ${fromNode.lon.toStringAsFixed(5)}'),
+    ];
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          Text(m.text, style: const TextStyle(fontSize: 16)),
+          const SizedBox(height: 12),
+          for (final (k, v) in rows)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SizedBox(width: 110, child: Text(k, style: Theme.of(context).textTheme.bodySmall)),
+                Expanded(child: SelectableText(v)),
+              ]),
+            ),
+          if (!m.mine && m.from?.proto == p.Proto.meshStar)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: OutlinedButton.icon(onPressed: () => store.trace(m.from!), icon: const Icon(Icons.route_outlined), label: const Text('Trace route to sender')),
+            ),
         ]),
       ),
     );

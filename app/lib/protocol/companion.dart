@@ -94,6 +94,7 @@ class NodeId {
     if (isBroadcast) return 'broadcast';
     switch (proto) {
       case Proto.meshStar:
+        if (bytes.sublist(0, 6).every((b) => b == 0)) return '~${_hex(bytes.sublist(6, 8)).toUpperCase()}';
         return '${_hex(bytes.sublist(4, 6))}.${_hex(bytes.sublist(6, 8))}'.toUpperCase();
       case Proto.meshtastic:
         final n = ByteData.sublistView(bytes).getUint32(0, Endian.little);
@@ -130,11 +131,14 @@ class NodeInfo {
 }
 
 class NodeEntry {
-  NodeEntry({required this.id, required this.name, required this.rssiDbm, required this.snrQ, required this.security, required this.hops, required this.flags, required this.lastSeenS});
+  NodeEntry({required this.id, required this.name, required this.rssiDbm, required this.snrQ, required this.security, required this.hops, required this.flags, required this.lastSeenS, this.latE7 = 0, this.lonE7 = 0});
   final NodeId id;
   final String name;
-  final int rssiDbm, snrQ, hops, flags, lastSeenS;
+  final int rssiDbm, snrQ, hops, flags, lastSeenS, latE7, lonE7;
   final Security security;
+  bool get hasPosition => latE7 != 0 || lonE7 != 0;
+  double get lat => latE7 / 1e7;
+  double get lon => lonE7 / 1e7;
   bool get sleeping => flags & 1 != 0;
   bool get anchor => flags & 2 != 0;
   bool get hasSession => flags & 4 != 0;
@@ -142,10 +146,10 @@ class NodeEntry {
 }
 
 class Message {
-  Message({required this.seq, required this.from, required this.fromName, required this.channel, required this.text, required this.security, required this.rssiDbm, required this.snrQ, required this.hops, required this.ageS});
+  Message({required this.seq, required this.from, required this.fromName, required this.channel, required this.text, required this.security, required this.rssiDbm, required this.snrQ, required this.hops, required this.ageS, this.via = ''});
   final int seq;
   final NodeId from;
-  final String fromName, channel, text;
+  final String fromName, channel, text, via;
   final Security security;
   final int rssiDbm, snrQ, hops, ageS;
 }
@@ -199,11 +203,25 @@ class ModeChanged extends Event {
 // ------------------------------------------------------------ requests
 
 class Req {
-  static const getInfo = 0x01, getNodes = 0x02, sendText = 0x03, getNetworks = 0x04, setMode = 0x05, getStatus = 0x06, setName = 0x07, setRole = 0x08, announce = 0x09, getMessages = 0x0A, setTime = 0x0B, reboot = 0x0C, ping = 0x0D;
+  static const getInfo = 0x01, getNodes = 0x02, sendText = 0x03, getNetworks = 0x04, setMode = 0x05, getStatus = 0x06, setName = 0x07, setRole = 0x08, announce = 0x09, getMessages = 0x0A, setTime = 0x0B, reboot = 0x0C, ping = 0x0D, getSettings = 0x0E, setSettings = 0x0F, setPosition = 0x10, trace = 0x11;
 }
 
 class Resp {
-  static const info = 0x81, node = 0x82, sendResult = 0x83, message = 0x84, delivery = 0x85, network = 0x86, status = 0x87, event = 0x88, pong = 0x8D, end = 0x8F, error = 0xFF;
+  static const info = 0x81, node = 0x82, sendResult = 0x83, message = 0x84, delivery = 0x85, network = 0x86, status = 0x87, event = 0x88, settings = 0x89, trace = 0x8A, pong = 0x8D, end = 0x8F, error = 0xFF;
+}
+
+/// Persistent node settings (role, profile and beacon interval apply after
+/// the node reboots, which it does on SetSettings).
+class Settings {
+  Settings({required this.name, required this.role, required this.profile, required this.txPowerDbm, required this.mode, required this.beaconIntervalS});
+  String name;
+  int role, profile, txPowerDbm, beaconIntervalS;
+  Mode mode;
+
+  static const roles = ['NORMAL', 'LEAF', 'ANCHOR'];
+  static const profiles = ['EU868 (SF8, 125 kHz)', 'EU868 long range (SF10)', 'EU868 fast (SF7, 250 kHz)', 'US915 (SF8, 125 kHz)'];
+
+  Settings copy() => Settings(name: name, role: role, profile: profile, txPowerDbm: txPowerDbm, mode: mode, beaconIntervalS: beaconIntervalS);
 }
 
 class _W {
@@ -215,6 +233,7 @@ class _W {
   void i8(int v) => _b.add(v & 0xFF);
   void u16(int v) => _b.addAll([v & 0xFF, (v >> 8) & 0xFF]);
   void u32(int v) => _b.addAll([v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF]);
+  void i32(int v) => u32(v & 0xFFFFFFFF);
   void bytes(List<int> b) {
     final n = b.length > 255 ? 255 : b.length;
     _b.add(n);
@@ -262,6 +281,11 @@ class _R {
     return v > 32767 ? v - 65536 : v;
   }
   int u32() => u8() | (u8() << 8) | (u8() << 16) | (u8() << 24);
+  int i32() {
+    final v = u32();
+    return v > 0x7FFFFFFF ? v - 0x100000000 : v;
+  }
+  bool get more => p < d.length;
   Uint8List bytes() {
     final n = u8();
     if (p + n > d.length) throw const FormatException('truncated');
@@ -311,6 +335,41 @@ class SetName extends Request {
   final String name;
   @override
   Uint8List encode() => (_W(Req.setName)..str(name)).finish();
+}
+
+class GetSettings extends Request {
+  @override
+  Uint8List encode() => _W(Req.getSettings).finish();
+}
+
+class SetSettings extends Request {
+  SetSettings(this.s);
+  final Settings s;
+  @override
+  Uint8List encode() {
+    final w = _W(Req.setSettings);
+    w.str(s.name);
+    w.u8(s.role);
+    w.u8(s.profile);
+    w.i8(s.txPowerDbm);
+    w.u8(s.mode.code);
+    w.u16(s.beaconIntervalS);
+    return w.finish();
+  }
+}
+
+class SetPosition extends Request {
+  SetPosition(this.latE7, this.lonE7);
+  final int latE7, lonE7;
+  @override
+  Uint8List encode() => (_W(Req.setPosition)..i32(latE7)..i32(lonE7)).finish();
+}
+
+class Trace extends Request {
+  Trace(this.to);
+  final NodeId to;
+  @override
+  Uint8List encode() => (_W(Req.trace)..id(to)).finish();
 }
 
 class GetNetworks extends Request {
@@ -376,11 +435,19 @@ sealed class Response {
         final pk = Uint8List.fromList(r.bytes());
         return InfoResponse(NodeInfo(name: name, id: id, publicKey: pk, role: r.u8(), firmware: r.str(), frequencyHz: r.u32(), bandwidthHz: r.u32(), spreadingFactor: r.u8(), codingRate: r.u8(), txPowerDbm: r.i8(), capabilities: r.u16()));
       case Resp.node:
-        return NodeResponse(NodeEntry(id: r.id(), name: r.str(), rssiDbm: r.i16(), snrQ: r.i8(), security: Security.fromCode(r.u8()), hops: r.u8(), flags: r.u8(), lastSeenS: r.u32()));
+        final n = NodeEntry(id: r.id(), name: r.str(), rssiDbm: r.i16(), snrQ: r.i8(), security: Security.fromCode(r.u8()), hops: r.u8(), flags: r.u8(), lastSeenS: r.u32());
+        if (r.more) {
+          final lat = r.i32();
+          final lon = r.i32();
+          return NodeResponse(NodeEntry(id: n.id, name: n.name, rssiDbm: n.rssiDbm, snrQ: n.snrQ, security: n.security, hops: n.hops, flags: n.flags, lastSeenS: n.lastSeenS, latE7: lat, lonE7: lon));
+        }
+        return NodeResponse(n);
       case Resp.sendResult:
         return SendResult(r.u32(), r.u8() != 0, r.u8());
       case Resp.message:
-        return MessageResponse(Message(seq: r.u32(), from: r.id(), fromName: r.str(), channel: r.str(), text: r.str(), security: Security.fromCode(r.u8()), rssiDbm: r.i16(), snrQ: r.i8(), hops: r.u8(), ageS: r.u32()));
+        final m = Message(seq: r.u32(), from: r.id(), fromName: r.str(), channel: r.str(), text: r.str(), security: Security.fromCode(r.u8()), rssiDbm: r.i16(), snrQ: r.i8(), hops: r.u8(), ageS: r.u32());
+        final via = r.more ? r.str() : '';
+        return MessageResponse(Message(seq: m.seq, from: m.from, fromName: m.fromName, channel: m.channel, text: m.text, security: m.security, rssiDbm: m.rssiDbm, snrQ: m.snrQ, hops: m.hops, ageS: m.ageS, via: via));
       case Resp.delivery:
         final handle = r.u32();
         final st = r.u8();
@@ -407,6 +474,15 @@ sealed class Response {
           default:
             throw FormatException('event $k');
         }
+      case Resp.trace:
+        final to = r.id();
+        final reached = r.u8() != 0;
+        final rtt = r.u32();
+        final n = r.u8();
+        final hops = <NodeId>[for (var i = 0; i < n; i++) r.id()];
+        return TraceResponse(to, reached, hops, rtt);
+      case Resp.settings:
+        return SettingsResponse(Settings(name: r.str(), role: r.u8(), profile: r.u8(), txPowerDbm: r.i8(), mode: Mode.fromCode(r.u8()), beaconIntervalS: r.u16()));
       case Resp.end:
         return EndResponse(r.u8());
       case Resp.pong:
@@ -469,6 +545,19 @@ class EndResponse extends Response {
 class Pong extends Response {
   Pong(this.n);
   final int n;
+}
+
+class TraceResponse extends Response {
+  TraceResponse(this.to, this.reached, this.hops, this.rttMs);
+  final NodeId to;
+  final bool reached;
+  final List<NodeId> hops;
+  final int rttMs;
+}
+
+class SettingsResponse extends Response {
+  SettingsResponse(this.settings);
+  final Settings settings;
 }
 
 class ErrorResponse extends Response {

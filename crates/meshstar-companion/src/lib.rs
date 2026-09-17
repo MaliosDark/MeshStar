@@ -179,6 +179,9 @@ pub struct NodeEntry {
     /// 1 sleeping LEAF, 2 anchor, 4 has session, 8 name verified.
     pub flags: u8,
     pub last_seen_s: u32,
+    /// Last known position, degrees x 1e7; both 0 = unknown.
+    pub lat_e7: i32,
+    pub lon_e7: i32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -194,6 +197,9 @@ pub struct Message {
     pub age_s: u32,
     /// Node-local message number (for history paging / dedup).
     pub seq: u32,
+    /// Path as far as the protocol tells it: the last MeshStar relay, the
+    /// MeshCore repeater hashes, the Meshtastic relay byte. Empty = direct.
+    pub via: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -220,6 +226,20 @@ pub struct Status {
     pub unread: u8,
     pub last_rssi_dbm: i16,
     pub last_snr_q: i8,
+}
+
+/// Persistent node settings (applied on the next boot for role, profile
+/// and beacon interval; name, power and mode apply live too).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Settings {
+    pub name: String,
+    /// 0 normal, 1 leaf, 2 anchor.
+    pub role: u8,
+    /// 0 EU868, 1 EU868 long range, 2 EU868 fast, 3 US915.
+    pub profile: u8,
+    pub tx_power_dbm: i8,
+    pub mode: Mode,
+    pub beacon_interval_s: u16,
 }
 
 /// Asynchronous node events.
@@ -253,6 +273,15 @@ pub enum Request {
     Reboot,
     /// Keep-alive / round trip check; the node answers with `Pong`.
     Ping(u32),
+    GetSettings,
+    /// Save settings; the node answers `End` and reboots to apply them.
+    SetSettings(Settings),
+    /// The phone's position: the node keeps it and broadcasts it on the
+    /// MeshStar network (and answers `End`). Both 0 clears it.
+    SetPosition { lat_e7: i32, lon_e7: i32 },
+    /// Trace the route to a MeshStar node; the node answers `Trace` when
+    /// the reply comes back (or with `reached: false` on timeout).
+    Trace { to: NodeId },
 }
 
 /// Node -> app.
@@ -270,6 +299,9 @@ pub enum Response {
     End { kind: u8 },
     Pong(u32),
     Error { code: u8, text: String },
+    Settings(Settings),
+    /// Result of a `Trace`: the relays between us and `to`, in order.
+    Trace { to: NodeId, reached: bool, hops: Vec<NodeId>, rtt_ms: u32 },
 }
 
 pub mod req {
@@ -286,6 +318,10 @@ pub mod req {
     pub const SET_TIME: u8 = 0x0B;
     pub const REBOOT: u8 = 0x0C;
     pub const PING: u8 = 0x0D;
+    pub const GET_SETTINGS: u8 = 0x0E;
+    pub const SET_SETTINGS: u8 = 0x0F;
+    pub const SET_POSITION: u8 = 0x10;
+    pub const TRACE: u8 = 0x11;
 }
 
 pub mod resp {
@@ -299,6 +335,8 @@ pub mod resp {
     pub const EVENT: u8 = 0x88;
     pub const END: u8 = 0x8F;
     pub const PONG: u8 = 0x8D;
+    pub const SETTINGS: u8 = 0x89;
+    pub const TRACE: u8 = 0x8A;
     pub const ERROR: u8 = 0xFF;
 }
 
@@ -340,6 +378,9 @@ impl W {
         self.0.extend_from_slice(&v.to_le_bytes());
     }
     fn i16(&mut self, v: i16) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn i32(&mut self, v: i32) {
         self.0.extend_from_slice(&v.to_le_bytes());
     }
     fn u32(&mut self, v: u32) {
@@ -414,6 +455,24 @@ impl<'a> R<'a> {
     fn u32(&mut self) -> Result<u32, DecodeError> {
         let b = self.take(4)?;
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+    fn i32(&mut self) -> Result<i32, DecodeError> {
+        Ok(self.u32()? as i32)
+    }
+    /// Optional trailing field (older senders omit it).
+    fn i32_or(&mut self, default: i32) -> i32 {
+        if self.0.len() >= 4 {
+            self.i32().unwrap_or(default)
+        } else {
+            default
+        }
+    }
+    fn str_or_empty(&mut self) -> String {
+        if self.0.is_empty() {
+            String::new()
+        } else {
+            self.str().unwrap_or_default()
+        }
     }
     fn bytes(&mut self) -> Result<&'a [u8], DecodeError> {
         let n = self.u8()? as usize;
@@ -490,6 +549,23 @@ impl Request {
                 w.u32(*n);
                 w.finish()
             }
+            Self::GetSettings => W::new(req::GET_SETTINGS).finish(),
+            Self::SetSettings(st) => {
+                let mut w = W::new(req::SET_SETTINGS);
+                write_settings(&mut w, st);
+                w.finish()
+            }
+            Self::SetPosition { lat_e7, lon_e7 } => {
+                let mut w = W::new(req::SET_POSITION);
+                w.i32(*lat_e7);
+                w.i32(*lon_e7);
+                w.finish()
+            }
+            Self::Trace { to } => {
+                let mut w = W::new(req::TRACE);
+                w.id(to);
+                w.finish()
+            }
         }
     }
 
@@ -516,6 +592,10 @@ impl Request {
             req::SET_TIME => Self::SetTime { unix_s: r.u32()? },
             req::REBOOT => Self::Reboot,
             req::PING => Self::Ping(r.u32()?),
+            req::GET_SETTINGS => Self::GetSettings,
+            req::SET_SETTINGS => Self::SetSettings(read_settings(&mut r)?),
+            req::SET_POSITION => Self::SetPosition { lat_e7: r.i32()?, lon_e7: r.i32()? },
+            req::TRACE => Self::Trace { to: r.id()? },
             other => return Err(DecodeError::UnknownType(other)),
         };
         // Trailing bytes are tolerated (forward compatibility).
@@ -556,6 +636,8 @@ impl Response {
                 w.u8(n.hops);
                 w.u8(n.flags);
                 w.u32(n.last_seen_s);
+                w.i32(n.lat_e7);
+                w.i32(n.lon_e7);
                 w.finish()
             }
             Self::SendResult { handle, accepted, reason } => {
@@ -577,6 +659,7 @@ impl Response {
                 w.i8(m.snr_q);
                 w.u8(m.hops);
                 w.u32(m.age_s);
+                w.str(&m.via);
                 w.finish()
             }
             Self::DeliveryUpdate { handle, state, reason } => {
@@ -659,6 +742,22 @@ impl Response {
                 w.str(text);
                 w.finish()
             }
+            Self::Settings(st) => {
+                let mut w = W::new(resp::SETTINGS);
+                write_settings(&mut w, st);
+                w.finish()
+            }
+            Self::Trace { to, reached, hops, rtt_ms } => {
+                let mut w = W::new(resp::TRACE);
+                w.id(to);
+                w.u8(u8::from(*reached));
+                w.u32(*rtt_ms);
+                w.u8(hops.len().min(255) as u8);
+                for h in hops.iter().take(255) {
+                    w.id(h);
+                }
+                w.finish()
+            }
         }
     }
 
@@ -679,9 +778,18 @@ impl Response {
                 public_key.copy_from_slice(pk);
                 Self::Info(NodeInfo { name, id, public_key, role: r.u8()?, firmware: r.str()?, frequency_hz: r.u32()?, bandwidth_hz: r.u32()?, spreading_factor: r.u8()?, coding_rate: r.u8()?, tx_power_dbm: r.i8()?, capabilities: r.u16()? })
             }
-            resp::NODE => Self::Node(NodeEntry { id: r.id()?, name: r.str()?, rssi_dbm: r.i16()?, snr_q: r.i8()?, security: Security::from_u8(r.u8()?), hops: r.u8()?, flags: r.u8()?, last_seen_s: r.u32()? }),
+            resp::NODE => {
+                let mut n = NodeEntry { id: r.id()?, name: r.str()?, rssi_dbm: r.i16()?, snr_q: r.i8()?, security: Security::from_u8(r.u8()?), hops: r.u8()?, flags: r.u8()?, last_seen_s: r.u32()?, lat_e7: 0, lon_e7: 0 };
+                n.lat_e7 = r.i32_or(0);
+                n.lon_e7 = r.i32_or(0);
+                Self::Node(n)
+            }
             resp::SEND_RESULT => Self::SendResult { handle: r.u32()?, accepted: r.u8()? != 0, reason: r.u8()? },
-            resp::MESSAGE => Self::Message(Message { seq: r.u32()?, from: r.id()?, from_name: r.str()?, channel: r.str()?, text: r.str()?, security: Security::from_u8(r.u8()?), rssi_dbm: r.i16()?, snr_q: r.i8()?, hops: r.u8()?, age_s: r.u32()? }),
+            resp::MESSAGE => {
+                let mut m = Message { seq: r.u32()?, from: r.id()?, from_name: r.str()?, channel: r.str()?, text: r.str()?, security: Security::from_u8(r.u8()?), rssi_dbm: r.i16()?, snr_q: r.i8()?, hops: r.u8()?, age_s: r.u32()?, via: String::new() };
+                m.via = r.str_or_empty();
+                Self::Message(m)
+            }
             resp::DELIVERY => {
                 let handle = r.u32()?;
                 let state = match r.u8()? {
@@ -709,11 +817,36 @@ impl Response {
             resp::END => Self::End { kind: r.u8()? },
             resp::PONG => Self::Pong(r.u32()?),
             resp::ERROR => Self::Error { code: r.u8()?, text: r.str()? },
+            resp::SETTINGS => Self::Settings(read_settings(&mut r)?),
+            resp::TRACE => {
+                let to = r.id()?;
+                let reached = r.u8()? != 0;
+                let rtt_ms = r.u32()?;
+                let n = r.u8()? as usize;
+                let mut hops = Vec::with_capacity(n);
+                for _ in 0..n {
+                    hops.push(r.id()?);
+                }
+                Self::Trace { to, reached, hops, rtt_ms }
+            }
             other => return Err(DecodeError::UnknownType(other)),
         };
         let _ = r.done();
         Ok(v)
     }
+}
+
+fn write_settings(w: &mut W, st: &Settings) {
+    w.str(&st.name);
+    w.u8(st.role);
+    w.u8(st.profile);
+    w.i8(st.tx_power_dbm);
+    w.u8(st.mode as u8);
+    w.u16(st.beacon_interval_s);
+}
+
+fn read_settings(r: &mut R<'_>) -> Result<Settings, DecodeError> {
+    Ok(Settings { name: r.str()?, role: r.u8()?, profile: r.u8()?, tx_power_dbm: r.i8()?, mode: Mode::from_u8(r.u8()?).ok_or(DecodeError::BadValue)?, beacon_interval_s: r.u16()? })
 }
 
 // ---------------------------------------------------------------- framer
@@ -805,14 +938,19 @@ mod tests {
         roundtrip_req(Request::GetMessages { after_seq: 77 });
         roundtrip_req(Request::SetTime { unix_s: 1_700_000_000 });
         roundtrip_req(Request::Ping(9));
+        roundtrip_req(Request::GetSettings);
+        roundtrip_req(Request::SetPosition { lat_e7: 1, lon_e7: -2 });
+        roundtrip_req(Request::Trace { to: NodeId::MeshStar([1; 8]) });
+        roundtrip_req(Request::SetSettings(Settings { name: "Relay".into(), role: 2, profile: 1, tx_power_dbm: 20, mode: Mode::Scan, beacon_interval_s: 120 }));
     }
 
     #[test]
     fn responses_roundtrip() {
         roundtrip_resp(Response::Info(NodeInfo { name: "A".into(), id: NodeId::MeshStar([7; 8]), public_key: [9; 32], role: 2, firmware: "0.1.0".into(), frequency_hz: 869_525_000, bandwidth_hz: 125_000, spreading_factor: 8, coding_rate: 5, tx_power_dbm: 14, capabilities: 7 }));
-        roundtrip_resp(Response::Node(NodeEntry { id: NodeId::Meshtastic(0xf6fbf5a4), name: "Meshtastic-B".into(), rssi_dbm: -91, snr_q: 26, security: Security::Channel, hops: 0, flags: 0, last_seen_s: 12 }));
-        roundtrip_resp(Response::Node(NodeEntry { id: NodeId::MeshCore(vec![0xab]), name: "~ab".into(), rssi_dbm: -104, snr_q: -8, security: Security::Opaque, hops: 1, flags: 0, last_seen_s: 0 }));
-        roundtrip_resp(Response::Message(Message { seq: 3, from: NodeId::MeshCore(vec![0x88; 32]), from_name: "Chiripa".into(), channel: "Public".into(), text: "hola".into(), security: Security::Channel, rssi_dbm: -84, snr_q: 40, hops: 0, age_s: 5 }));
+        roundtrip_resp(Response::Node(NodeEntry { id: NodeId::Meshtastic(0xf6fbf5a4), name: "Meshtastic-B".into(), rssi_dbm: -91, snr_q: 26, security: Security::Channel, hops: 0, flags: 0, last_seen_s: 12, lat_e7: 405_000_000, lon_e7: -37_000_000 }));
+        roundtrip_resp(Response::Node(NodeEntry { id: NodeId::MeshCore(vec![0xab]), name: "~ab".into(), rssi_dbm: -104, snr_q: -8, security: Security::Opaque, hops: 1, flags: 0, last_seen_s: 0, lat_e7: 0, lon_e7: 0 }));
+        roundtrip_resp(Response::Message(Message { seq: 3, from: NodeId::MeshCore(vec![0x88; 32]), from_name: "Chiripa".into(), channel: "Public".into(), text: "hola".into(), security: Security::Channel, rssi_dbm: -84, snr_q: 40, hops: 0, age_s: 5, via: "ab".into() }));
+        roundtrip_resp(Response::Trace { to: NodeId::MeshStar([3; 8]), reached: true, hops: vec![NodeId::MeshStar([4; 8]), NodeId::MeshStar([5; 8])], rtt_ms: 2500 });
         roundtrip_resp(Response::DeliveryUpdate { handle: 5, state: Delivery::Delivered, reason: 0 });
         roundtrip_resp(Response::Network(Network { proto: Proto::MeshCore, name: "Public".into(), nodes: 2, rssi_dbm: -84, frames: 10, last_seen_s: 1 }));
         roundtrip_resp(Response::Status(Status { mode: Mode::Scan, battery_mv: 3900, uptime_s: 100, neighbors: 1, zone: 2, sessions: 1, rx_frames: 5, tx_frames: 6, duty_permille: 12, unread: 1, last_rssi_dbm: -70, last_snr_q: 20 }));
@@ -821,6 +959,7 @@ mod tests {
         roundtrip_resp(Response::End { kind: req::GET_NODES });
         roundtrip_resp(Response::Pong(1));
         roundtrip_resp(Response::Error { code: err::NO_ROUTE, text: "no route".into() });
+        roundtrip_resp(Response::Settings(Settings { name: "A".into(), role: 0, profile: 0, tx_power_dbm: 14, mode: Mode::Native, beacon_interval_s: 120 }));
     }
 
     #[test]

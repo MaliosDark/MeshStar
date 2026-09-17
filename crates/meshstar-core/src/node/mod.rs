@@ -151,7 +151,9 @@ pub enum FailReason {
 /// Events for the application.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NodeEvent {
-    MessageReceived { from: Address, seq: u16, payload: Vec<u8>, protection: Protection, hops: u8, rssi_dbm: i16, snr_db: f32 },
+    /// `relay`: the neighbour that handed us the frame when it came over
+    /// more than one hop (the header carries only the last relay).
+    MessageReceived { from: Address, seq: u16, payload: Vec<u8>, protection: Protection, hops: u8, rssi_dbm: i16, snr_db: f32, relay: Option<Address> },
     /// Acknowledged end to end (or envelope opened by the destination).
     Delivered { handle: u32, to: Address, rtt_ms: u64 },
     /// Accepted by an ANCHOR mailbox for a currently offline destination.
@@ -166,6 +168,9 @@ pub enum NodeEvent {
     /// LEAF: woke up / went to sleep.
     PowerState { awake: bool },
     MailboxDelivered { to: Address, envelope_id: u32 },
+    /// Answer to [`Node::trace`]: the relays' short ids between us and `dst`
+    /// in order (resolve them with the neighbour/zone tables when known).
+    TraceResult { dst: Address, reached: bool, hops: Vec<u16>, rtt_ms: u64 },
 }
 
 /// A frame waiting for the radio.
@@ -272,6 +277,8 @@ pub struct Node {
     /// LEAF: FETCH scheduled after the wake-up beacon, sent only if the
     /// host did not react to the beacon by then.
     pub(crate) pending_fetch: Option<(Address, u64, u32)>,
+    /// Route traces in flight: destination, started at.
+    pub(crate) pending_traces: Vec<(Address, u64)>,
     /// ANCHOR: packets held for a sleeping LEAF neighbour, (leaf, packet, expires).
     pub(crate) held_for_sleeping: Vec<(Address, Packet, u64)>,
     /// Unicast packets awaiting a hop acknowledgement.
@@ -347,6 +354,7 @@ impl Node {
             last_wake: now,
             slept_at: now,
             pending_fetch: None,
+            pending_traces: Vec::new(),
             held_for_sleeping: Vec::new(),
             hop_pending: Vec::new(),
             cfg,
@@ -692,6 +700,13 @@ impl Node {
                 }
                 self.counters.handshake_failures += 1;
             }
+        }
+
+        // Route traces that never came back.
+        let expired: Vec<Address> = self.pending_traces.iter().filter(|(_, t)| now.saturating_sub(*t) > 30_000).map(|(d, _)| *d).collect();
+        for d in expired {
+            self.pending_traces.retain(|(x, _)| *x != d);
+            self.emit(NodeEvent::TraceResult { dst: d, reached: false, hops: Vec::new(), rtt_ms: 0 });
         }
 
         if now.saturating_sub(self.last_housekeeping) >= 1000 {

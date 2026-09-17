@@ -153,3 +153,19 @@ fn relay_survives_garbage_and_stays_bounded() {
     assert!(r.stats.rx_bad > 4_000);
     assert!(r.tx_queue_len() <= 4);
 }
+
+#[test]
+fn trace_reports_the_relay_in_between() {
+    let mut w = world(1);
+    w.run(6_000);
+    let b_addr = w.nodes[1].address();
+    let r_short = w.relays[0].address().short();
+    w.nodes[0].trace(b_addr).unwrap();
+    w.run(6_000);
+    let res = w.events_of(0).into_iter().find_map(|e| if let NodeEvent::TraceResult { dst, reached, hops, rtt_ms } = e { Some((*dst, *reached, hops.clone(), *rtt_ms)) } else { None });
+    let (dst, reached, hops, rtt) = res.expect("trace result");
+    assert_eq!(dst, b_addr);
+    assert!(reached);
+    assert_eq!(hops, vec![r_short], "path should be exactly the relay");
+    assert!(rtt > 0 && rtt < 6_000);
+}

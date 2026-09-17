@@ -173,6 +173,14 @@ pub mod control {
     /// packet. Plaintext, TTL 1, addressed to the previous hop. It only
     /// suppresses a retransmission, so it needs no authentication.
     pub const LINK_ACK: u8 = 8;
+    /// Route trace request, plaintext: `[TRACE_REQ][short id u16]*` — every
+    /// relay appends its own short id on the way; the destination answers
+    /// with `TRACE_REP` carrying the list. Diagnostics only (unauthenticated,
+    /// like a traceroute).
+    pub const TRACE_REQ: u8 = 10;
+    pub const TRACE_REP: u8 = 11;
+    /// Most relay entries a trace records.
+    pub const TRACE_MAX_HOPS: usize = 24;
     /// Plaintext notice: "I have no session with you" (our handshake
     /// message 3 was lost). The initiator resends message 3. Unauthenticated,
     /// so it is rate limited and only ever causes one retransmission.

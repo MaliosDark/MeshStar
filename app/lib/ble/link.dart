@@ -150,7 +150,7 @@ class BleLink extends ChangeNotifier {
       Future.delayed(Duration(seconds: _backoffS), () {
         if (_wantConnected && state != LinkState.connected) _connectOnce();
       });
-      _backoffS = (_backoffS * 2).clamp(1, 30);
+      _backoffS = (_backoffS * 2).clamp(1, 6);
     }
   }
 
