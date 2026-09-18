@@ -136,7 +136,7 @@ class NodeEntry {
   final String name;
   final int rssiDbm, snrQ, hops, flags, lastSeenS, latE7, lonE7;
   final Security security;
-  bool get hasPosition => latE7 != 0 || lonE7 != 0;
+  bool get hasPosition => (latE7.abs() > 1000 || lonE7.abs() > 1000) && latE7.abs() <= 900000000 && lonE7.abs() <= 1800000000;
   double get lat => latE7 / 1e7;
   double get lon => lonE7 / 1e7;
   bool get sleeping => flags & 1 != 0;

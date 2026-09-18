@@ -38,9 +38,9 @@ class _MapPageState extends State<MapPage> {
     final pts = _points(store);
     if (pts.isEmpty) return;
     if (pts.length == 1) {
-      _map.move(pts.first, 15);
+      _map.move(pts.first, 12);
     } else {
-      _map.fitCamera(CameraFit.coordinates(coordinates: pts, padding: const EdgeInsets.all(60), maxZoom: 16));
+      _map.fitCamera(CameraFit.coordinates(coordinates: pts, padding: const EdgeInsets.all(60), maxZoom: 13));
     }
   }
 
@@ -54,7 +54,7 @@ class _MapPageState extends State<MapPage> {
     // Centre once, automatically, the first time we have something to show.
     if (!_centredOnce && pts.isNotEmpty) {
       _centredOnce = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _fit(store));
+      WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _fit(store); });
     }
 
     final lines = <Polyline>[];
@@ -81,6 +81,9 @@ class _MapPageState extends State<MapPage> {
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'org.meshstar.meshstar',
             tileProvider: NetworkTileProvider(),
+            keepBuffer: 6,
+            panBuffer: 3,
+            tileDisplay: const TileDisplay.fadeIn(duration: Duration(milliseconds: 150)),
           ),
           PolylineLayer(polylines: lines),
           MarkerLayer(markers: [
