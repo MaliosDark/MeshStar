@@ -130,8 +130,12 @@ class BleLink extends ChangeNotifier {
       _backoffS = 1;
       notifyListeners();
     } catch (e) {
-      error = '$e';
       debugPrint('connect failed: $e');
+      // A failed attempt just retries with backoff (the node may be out of
+      // range or still booting) — never surface a raw plugin exception like
+      // "FlutterBluePlus..." on screen. Only show a gentle note once we have
+      // given up scanning would be needed.
+      error = _wantConnected ? null : 'Could not connect to the node — is it powered and in range?';
       try {
         await device.disconnect();
       } catch (_) {}

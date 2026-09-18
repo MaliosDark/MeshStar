@@ -47,7 +47,7 @@ class _ConnectPageState extends State<ConnectPage> {
               label: Text(link.state == LinkState.scanning ? 'Scanning…' : 'Scan for nodes'),
             ),
           ]),
-          if (link.error != null)
+          if (link.error != null && link.state == LinkState.off)
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(children: [
