@@ -39,8 +39,6 @@ class _GraticulePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // A dark "sea" ground so the map reads as a map, not an empty screen.
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF10233A));
     final b = camera.visibleBounds;
     final line = Paint()
       ..color = const Color(0x552E5C86)

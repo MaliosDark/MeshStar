@@ -1,9 +1,6 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../state/store.dart';
@@ -11,7 +8,7 @@ import 'map_layers.dart';
 import 'nodes_page.dart';
 import 'widgets.dart';
 
-/// Nodes with a known position (own MeshStar position broadcasts,
+/// Every node with a known position (own MeshStar position broadcasts,
 /// Meshtastic positions, MeshCore adverts) and traced routes between them.
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
@@ -20,60 +17,81 @@ class MapPage extends StatefulWidget {
 }
 
 class _MapPageState extends State<MapPage> {
-  Directory? _cacheDir;
+  final _map = MapController();
+  bool _centredOnce = false;
 
-  @override
-  void initState() {
-    super.initState();
-    getTemporaryDirectory().then((d) async {
-      final dir = Directory('${d.path}/tiles');
-      try {
-        await dir.create(recursive: true);
-      } catch (_) {}
-      if (mounted) setState(() => _cacheDir = dir);
-    });
+  /// The points worth framing: our position and every located node.
+  List<LatLng> _points(Store store) {
+    final pts = <LatLng>[];
+    final me = store.myPosition;
+    if (me != null) pts.add(LatLng(me.latitude, me.longitude));
+    for (final n in store.nodes.values) {
+      if (n.hasPosition) pts.add(LatLng(n.lat, n.lon));
+    }
+    return pts;
+  }
+
+  /// Fit the camera to the points (or one point at street zoom). Called only
+  /// on an explicit action or the first time positions appear — never on
+  /// every rebuild, which is what used to make the map jump/"vanish".
+  void _fit(Store store) {
+    final pts = _points(store);
+    if (pts.isEmpty) return;
+    if (pts.length == 1) {
+      _map.move(pts.first, 15);
+    } else {
+      _map.fitCamera(CameraFit.coordinates(coordinates: pts, padding: const EdgeInsets.all(60), maxZoom: 16));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<Store>();
-    final located = store.nodes.values.where((n) => n.hasPosition).toList();
     final me = store.myPosition;
-    // Europe, over the Channel between France and the UK; the map never
-    // re-centres or re-zooms by itself (that is what made it "vanish"
-    // while tiles for a new zoom level loaded).
-    const center = LatLng(50.5, -1.5);
+    final located = store.nodes.values.where((n) => n.hasPosition).toList();
+    final pts = _points(store);
+
+    // Centre once, automatically, the first time we have something to show.
+    if (!_centredOnce && pts.isNotEmpty) {
+      _centredOnce = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _fit(store));
+    }
+
     final lines = <Polyline>[];
     for (final t in store.traces.values) {
       if (!t.reached) continue;
-      final pts = <LatLng>[];
-      if (me != null) pts.add(LatLng(me.latitude, me.longitude));
+      final p = <LatLng>[];
+      if (me != null) p.add(LatLng(me.latitude, me.longitude));
       for (final h in [...t.hops, t.to]) {
         final n = store.nodes[h];
-        if (n != null && n.hasPosition) pts.add(LatLng(n.lat, n.lon));
+        if (n != null && n.hasPosition) p.add(LatLng(n.lat, n.lon));
       }
-      if (pts.length >= 2) lines.add(Polyline(points: pts, color: kStar, strokeWidth: 3));
+      if (p.length >= 2) lines.add(Polyline(points: p, color: kStar, strokeWidth: 3));
     }
+
     return Stack(children: [
       FlutterMap(
-        options: const MapOptions(initialCenter: center, initialZoom: 6, backgroundColor: Color(0xFF0B1118)),
+        mapController: _map,
+        // Start over Europe; as soon as a real position arrives we recentre
+        // on it (once), and the button recentres on demand.
+        options: const MapOptions(initialCenter: LatLng(48, 5), initialZoom: 4, backgroundColor: Color(0xFF10233A)),
         children: [
           const GraticuleLayer(),
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'org.meshstar.meshstar',
-            keepBuffer: 4,
-            panBuffer: 1,
-            tileProvider: _cacheDir == null ? null : CachedTileProvider(_cacheDir!),
+            tileProvider: NetworkTileProvider(),
           ),
           PolylineLayer(polylines: lines),
           MarkerLayer(markers: [
-            if (me != null) Marker(point: LatLng(me.latitude, me.longitude), width: 36, height: 36, child: const Icon(Icons.my_location, color: Colors.white, size: 28)),
+            if (me != null)
+              Marker(point: LatLng(me.latitude, me.longitude), width: 30, height: 30, child: Container(decoration: BoxDecoration(color: Colors.blueAccent.withValues(alpha: 0.9), shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)))),
             for (final n in located)
               Marker(
                 point: LatLng(n.lat, n.lon),
-                width: 44,
-                height: 52,
+                width: 48,
+                height: 56,
+                alignment: Alignment.topCenter,
                 child: GestureDetector(
                   onTap: () => showModalBottomSheet(context: context, showDragHandle: true, isScrollControlled: true, useSafeArea: true, builder: (_) => NodeSheet(n)),
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -85,11 +103,7 @@ class _MapPageState extends State<MapPage> {
           ]),
         ],
       ),
-      const Positioned(
-        right: 6,
-        bottom: 4,
-        child: Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Colors.white54, backgroundColor: Color(0x880B1118))),
-      ),
+      const Positioned(right: 6, bottom: 4, child: Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Colors.white54, backgroundColor: Color(0x880B1118)))),
       Positioned(
         left: 12,
         right: 12,
@@ -104,9 +118,19 @@ class _MapPageState extends State<MapPage> {
           ),
         ),
       ),
+      Positioned(
+        right: 12,
+        bottom: 24,
+        child: Column(children: [
+          FloatingActionButton.small(heroTag: 'zin', onPressed: () => _map.move(_map.camera.center, _map.camera.zoom + 1), child: const Icon(Icons.add)),
+          const SizedBox(height: 8),
+          FloatingActionButton.small(heroTag: 'zout', onPressed: () => _map.move(_map.camera.center, _map.camera.zoom - 1), child: const Icon(Icons.remove)),
+          const SizedBox(height: 8),
+          FloatingActionButton(heroTag: 'fit', onPressed: pts.isEmpty ? null : () => _fit(store), backgroundColor: pts.isEmpty ? Colors.grey : kStar, child: const Icon(Icons.center_focus_strong)),
+        ]),
+      ),
       if (located.isEmpty && me == null)
-        const Positioned(left: 24, right: 24, bottom: 40, child: Card(child: Padding(padding: EdgeInsets.all(12), child: Text('No positions yet. Nodes appear here at their lat/lon when a position is known (your phone can share one above; Meshtastic and MeshCore nodes when they announce one). The grid works offline; map tiles need internet and are then cached for offline reuse.', style: TextStyle(fontSize: 13))))),
+        const Positioned(left: 24, right: 90, bottom: 40, child: Card(child: Padding(padding: EdgeInsets.all(12), child: Text('No positions yet. Turn on "Share my position" (needs GPS + internet for tiles), or a node appears here when it announces a position.', style: TextStyle(fontSize: 13))))),
     ]);
   }
 }
-
