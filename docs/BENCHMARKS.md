@@ -16,7 +16,7 @@ average of 8 good neighbours, beacons every 120 s, 30 minute runs (20 for
 over time: with spatial reuse it can exceed 100 %; "tx/deliv" counts every
 transmission (control included) per delivered message.
 
-## A. Local traffic (partners within 3 radio ranges) — the regime ZRP is built for
+## A. Local traffic (partners within 3 radio ranges), the regime ZRP is built for
 
 | nodes | strategy | delivered | acked | latency p50 | tx / delivery | control | util | duplicates |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|
@@ -42,7 +42,7 @@ nodes only by transmitting 13-19x more (250 transmissions per message at
 1.5-2x the latency and burns the batteries of every node in the network for
 every message. That is the "broadcast storm" MeshStar exists to avoid.
 
-## B. Random partners across the whole network — the worst case for any protocol
+## B. Random partners across the whole network, the worst case for any protocol
 
 | nodes | zrp | flood-protected | flood | zrp tx/deliv | flood tx/deliv |
 |---:|---:|---:|---:|---:|---:|
@@ -138,7 +138,7 @@ the default policy (`meshstar sim interop`).
 | gateway radios | foreign msgs bridged into MeshStar | reach of MeshStar nodes | added latency | native broadcasts reaching foreign nodes | missed by schedule | gateway dup / rate-limited |
 |---|---:|---:|---:|---:|---:|---:|
 | 1 (time shared 50/25/25, 6 s period) | 24 / 49 | 55 % | 2.4 s | 5 / 22 | 1 740 frames | 23 / 1 |
-| 1 with **CAD sniffing** across profiles | 39 / 47 | – | 1.8 s | 9 / 25 | 33 frames | – |
+| 1 with **CAD sniffing** across profiles | 39 / 47 |, | 1.8 s | 9 / 25 | 33 frames |, |
 | 2 (dedicated foreign radios) | 30 / 48 | 64 % | 1.2 s | 12 / 25 | 0 | 299 / 483 |
 
 A single time-shared radio hears about half of the foreign traffic (it is

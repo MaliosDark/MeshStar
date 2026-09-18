@@ -32,7 +32,7 @@ class _MapPageState extends State<MapPage> {
   }
 
   /// Fit the camera to the points (or one point at street zoom). Called only
-  /// on an explicit action or the first time positions appear — never on
+  /// on an explicit action or the first time positions appear, never on
   /// every rebuild, which is what used to make the map jump/"vanish".
   void _fit(Store store) {
     final pts = _points(store);

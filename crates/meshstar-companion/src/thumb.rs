@@ -1,7 +1,7 @@
 //! "Postage stamp" image codec for the mesh: a tiny picture (a message
 //! attachment or a profile photo) squeezed to a few hundred bytes so it
 //! fits a fragmented store-and-forward message. LoRa airtime is the budget,
-//! not screen quality — this is a thumbnail you recognise, not a photo.
+//! not screen quality, this is a thumbnail you recognise, not a photo.
 //!
 //! Format (`MSIMG1`): a fixed 16-colour RGB332 palette (so no palette is
 //! transmitted), the image reduced to at most 48x48, run-length encoded.

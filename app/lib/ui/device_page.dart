@@ -73,7 +73,7 @@ class DevicePage extends StatelessWidget {
       const SizedBox(height: 16),
       Text('Events', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 4),
-      if (store.log.isEmpty) const Text('—', style: TextStyle(color: kUnknown)),
+      if (store.log.isEmpty) const Text('-', style: TextStyle(color: kUnknown)),
       for (final l in store.log.reversed.take(60)) Text(l, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
     ]);
   }

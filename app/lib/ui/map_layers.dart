@@ -1,5 +1,5 @@
 /// Offline-friendly map layers: a geographic graticule that is drawn from
-/// the map camera (so nodes sit at their real lat/lon even with no tiles —
+/// the map camera (so nodes sit at their real lat/lon even with no tiles,
 /// the map is never a black rectangle), and a tile provider that caches
 /// tiles to disk so a session that had internet keeps working offline.
 library;

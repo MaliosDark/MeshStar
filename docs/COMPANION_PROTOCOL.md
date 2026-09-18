@@ -39,20 +39,20 @@ frame; decoders never panic on malformed input (fuzz-tested).
 
 | type | name | payload |
 |---|---|---|
-| 0x01 | GET_INFO | – |
-| 0x02 | GET_NODES | – → NODE* + END |
+| 0x01 | GET_INFO |, |
+| 0x02 | GET_NODES |, → NODE* + END |
 | 0x03 | SEND_TEXT | to:id, reliability:u8 (0 unreliable, 1 acknowledged, 2 store-and-forward), text:str → SEND_RESULT |
-| 0x04 | GET_NETWORKS | – → NETWORK* + END |
+| 0x04 | GET_NETWORKS |, → NETWORK* + END |
 | 0x05 | SET_MODE | mode:u8 (0 native, 1 MeshCore, 2 Meshtastic, 3 scan) → STATUS |
-| 0x06 | GET_STATUS | – → STATUS |
+| 0x06 | GET_STATUS |, → STATUS |
 | 0x07 | SET_NAME | name:str → END (persisted on the node) |
 | 0x08 | SET_ROLE | role:u8 → ERROR unsupported (build-time for now) |
-| 0x09 | ANNOUNCE | – → END; beacon / advert now |
+| 0x09 | ANNOUNCE |, → END; beacon / advert now |
 | 0x0A | GET_MESSAGES | after_seq:u32 → MESSAGE* + END (the node keeps the last 8) |
 | 0x0B | SET_TIME | unix_s:u32 → END (the node has no RTC; used for foreign timestamps) |
-| 0x0C | REBOOT | – |
+| 0x0C | REBOOT |, |
 | 0x0D | PING | n:u32 → PONG |
-| 0x0E | GET_SETTINGS | – → SETTINGS |
+| 0x0E | GET_SETTINGS |, → SETTINGS |
 | 0x0F | SET_SETTINGS | name:str, role:u8 (0 normal, 1 leaf, 2 anchor), profile:u8 (0 EU868, 1 EU868 long, 2 EU868 fast, 3 US915), tx_power:i8, mode:u8, beacon_interval_s:u16 → END; the node saves them to flash and reboots |
 | 0x10 | SET_POSITION | lat_e7:i32, lon_e7:i32 (both 0 clears) → END; the node broadcasts its position on MeshStar now and every 10 min |
 | 0x11 | TRACE | to:id → TRACE when the reply arrives or after 30 s |
@@ -98,17 +98,17 @@ phone and transmitted by the node.
 
 A "postage stamp" thumbnail codec (`meshstar-companion::thumb`, mirrored in
 `app/lib/protocol/thumb.dart`) squeezes a picture to a few hundred bytes so
-it fits a fragmented store-and-forward message — LoRa airtime is the budget,
+it fits a fragmented store-and-forward message, LoRa airtime is the budget,
 not screen quality. Format `MSIMG1`: a fixed 16-colour palette (never
 transmitted), the image reduced to at most 48x48, run-length encoded. A
 40x40 thumbnail is ~200-400 bytes.
 
-* `SEND_IMAGE` (0x12): `to:id, reliability:u8, data:blob16` — the node
+* `SEND_IMAGE` (0x12): `to:id, reliability:u8, data:blob16`, the node
   prepends the app marker `0x02` and sends it as a normal (fragmented)
-  MeshStar message. `SET_PROFILE_PHOTO` (0x13): `data:blob16` — the node
+  MeshStar message. `SET_PROFILE_PHOTO` (0x13): `data:blob16`, the node
   broadcasts it with marker `0x03` on MeshStar now and every 10 min.
 * `IMAGE` (0x8B): `seq:u32, from:id, from_name:str, kind:u8 (0 attachment,
-  1 profile), rssi:i16, hops:u8, age_s:u32, data:blob16` — a received
+  1 profile), rssi:i16, hops:u8, age_s:u32, data:blob16`, a received
   thumbnail. The app shows attachments as image bubbles and caches profile
   photos as avatars.
 

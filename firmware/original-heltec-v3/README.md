@@ -1,4 +1,4 @@
-# MeshStar v0.1.0-alpha firmware — Heltec WiFi LoRa 32 V3
+# MeshStar v0.1.0-alpha firmware, Heltec WiFi LoRa 32 V3
 
 MeshStar firmware for the Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262),
 written in C on ESP-IDF 5.2.1. A complete LoRa mesh node with OLED display,

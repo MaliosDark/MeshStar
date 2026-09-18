@@ -1,7 +1,7 @@
 //! MeshCore cryptographic primitives (`src/Utils.cpp`, `lib/ed25519`).
 //!
 //! * ECDH: X25519 with the clamped Ed25519 private scalar and the peer's
-//!   Edwards public key converted to Montgomery form. **No KDF** — the raw
+//!   Edwards public key converted to Montgomery form. **No KDF**, the raw
 //!   32-byte X25519 output is the shared secret.
 //! * Cipher: AES-128-ECB, key = `secret[0..16]`, plaintext zero-padded to
 //!   a 16-byte multiple, no IV.

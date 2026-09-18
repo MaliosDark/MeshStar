@@ -1,5 +1,5 @@
 /// Gallery picking is optional and needs the `image_picker` plugin, which
-/// requires network access at build time (Kotlin/AGP artifacts) — so the
+/// requires network access at build time (Kotlin/AGP artifacts), so the
 /// default offline build ships without it and uses bundled sample images.
 ///
 /// To enable real gallery picking on an ONLINE build:
@@ -16,7 +16,7 @@
 ///        return th.encodeFromImage(img, edge: 40);
 ///
 /// The rest of the app (encode, send, receive, display, profile photos)
-/// already works — only the source of the pixels changes.
+/// already works, only the source of the pixels changes.
 library;
 
 import 'dart:typed_data';

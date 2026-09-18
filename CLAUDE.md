@@ -1,4 +1,4 @@
-# MeshStar — guía para trabajar en este repositorio
+# MeshStar, guía para trabajar en este repositorio
 
 MeshStar es una plataforma LoRa mesh de nueva generación (Rust, GPL-3.0) con protocolo
 propio (ZRP + Noise XX + Ed25519 + LEAF/ANCHOR + store-and-forward + protección contra

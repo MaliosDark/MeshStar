@@ -103,7 +103,7 @@ class _ThreadPageState extends State<ThreadPage> {
       showDragHandle: true,
       builder: (_) => Column(mainAxisSize: MainAxisSize.min, children: [
         const Padding(padding: EdgeInsets.fromLTRB(12, 8, 12, 4), child: Text('Pick an image to send as a ~40x40 thumbnail')),
-        const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('(Gallery picking needs an online build — see app/README)', style: TextStyle(fontSize: 11, color: Colors.white54))),
+        const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('(Gallery picking needs an online build, see app/README)', style: TextStyle(fontSize: 11, color: Colors.white54))),
         const SizedBox(height: 8),
         Wrap(spacing: 12, runSpacing: 12, alignment: WrapAlignment.center, children: [
           for (final (path, name) in th.sampleImages)

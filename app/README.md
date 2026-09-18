@@ -47,9 +47,9 @@ already work.
 Online, OpenStreetMap tiles load and are cached to disk (`path_provider`) so
 a later offline session reuses them. Offline with no cache, a geographic
 grid (`lib/ui/map_layers.dart`) is drawn from the map camera, so nodes still
-plot at their real lat/lon — the map is never a black rectangle.
+plot at their real lat/lon, the map is never a black rectangle.
 
-## One radio, three networks — what to expect
+## One radio, three networks, what to expect
 
 Transmitting to MeshStar, Meshtastic and MeshCore works from any mode.
 Receiving all three at once with a single radio is a physical trade-off:

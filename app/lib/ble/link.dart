@@ -75,7 +75,7 @@ class BleLink extends ChangeNotifier {
     } catch (e) {
       final msg = e.toString();
       if (msg.contains('Location') || msg.contains('location')) {
-        error = 'Turn on Location — Android requires it to scan for Bluetooth devices (the app does not use your location).';
+        error = 'Turn on Location, Android requires it to scan for Bluetooth devices (the app does not use your location).';
       } else if (msg.contains('bluetooth') || msg.contains('Bluetooth') || msg.contains('adapter')) {
         error = 'Turn on Bluetooth to find your node.';
       } else {
@@ -132,10 +132,10 @@ class BleLink extends ChangeNotifier {
     } catch (e) {
       debugPrint('connect failed: $e');
       // A failed attempt just retries with backoff (the node may be out of
-      // range or still booting) — never surface a raw plugin exception like
+      // range or still booting), never surface a raw plugin exception like
       // "FlutterBluePlus..." on screen. Only show a gentle note once we have
       // given up scanning would be needed.
-      error = _wantConnected ? null : 'Could not connect to the node — is it powered and in range?';
+      error = _wantConnected ? null : 'Could not connect to the node, is it powered and in range?';
       try {
         await device.disconnect();
       } catch (_) {}

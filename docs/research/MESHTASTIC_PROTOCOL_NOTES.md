@@ -1,4 +1,4 @@
-# Meshtastic LoRa protocol — reference notes for a Rust adapter
+# Meshtastic LoRa protocol, reference notes for a Rust adapter
 
 Compiled 2026-09-16 from the official firmware, protobuf and documentation sources.
 Every fact below is cited to the fetched file it came from. Items that could not be
@@ -45,7 +45,7 @@ Struct from `RadioInterface.h` (must "exactly match the wire layout"); byte orde
 | 4 | 4 | `from` | u32 LE | Sender NodeNum. Receiver **drops** frames with `from == 0` ("Ignore received packet without sender"). |
 | 8 | 4 | `id` | u32 LE | Per-sender packet id; used for dedup and as crypto nonce input. |
 | 12 | 1 | `flags` | u8 | Bit layout in 1.2. |
-| 13 | 1 | `channel` | u8 | Channel **hash** (not index) — see 3.4. `0x00` on PKI (direct-message) packets. |
+| 13 | 1 | `channel` | u8 | Channel **hash** (not index), see 3.4. `0x00` on PKI (direct-message) packets. |
 | 14 | 1 | `next_hop` | u8 | Last byte of NodeNum of the requested next relay; `0` = no preference (`NO_NEXT_HOP_PREFERENCE`). |
 | 15 | 1 | `relay_node` | u8 | Last byte of NodeNum of the node that (re)transmitted this frame; `0` = unknown (`NO_RELAY_NODE`). |
 | 16.. | ≤239 | payload | bytes | Encrypted `Data` protobuf (plus 12-byte trailer for PKI/AEAD). |
@@ -62,19 +62,19 @@ From `RadioInterface.h`:
 
 | Bits | Mask | Meaning |
 |---|---|---|
-| 0–2 | `PACKET_FLAGS_HOP_LIMIT_MASK 0x07` | `hop_limit` (remaining hops, 0–7) |
+| 0-2 | `PACKET_FLAGS_HOP_LIMIT_MASK 0x07` | `hop_limit` (remaining hops, 0-7) |
 | 3 | `PACKET_FLAGS_WANT_ACK_MASK 0x08` | `want_ack` |
 | 4 | `PACKET_FLAGS_VIA_MQTT_MASK 0x10` | `via_mqtt` |
-| 5–7 | `PACKET_FLAGS_HOP_START_MASK 0xE0`, shift 5 | `hop_start` (hop_limit the originator started with) |
+| 5-7 | `PACKET_FLAGS_HOP_START_MASK 0xE0`, shift 5 | `hop_start` (hop_limit the originator started with) |
 
 TX: `flags = hop_limit | (want_ack?0x08:0) | (via_mqtt?0x10:0) | ((hop_start<<5)&0xE0)`; if `hop_limit > HOP_MAX (7)` it is clamped to `HOP_RELIABLE (3)` (`beginSending`, RadioInterface.cpp).
 RX: `hop_limit = flags & 7; hop_start = (flags & 0xE0) >> 5; want_ack = !!(flags & 8); via_mqtt = !!(flags & 0x10)` (RadioLibInterface.cpp).
 
 ### 1.3 Field history / version gates
 
-- `hop_start` (bits 5–7) added in firmware **2.3.0** (commit 585805c); the `Data.bitfield` field (always present from **2.5.0**, commit bf34329) is used to decide if `hop_start == 0` is trustworthy. Source: `getHopsAway()` comment, https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/NodeDB.cpp and the `hop_start` comment in mesh.proto.
+- `hop_start` (bits 5-7) added in firmware **2.3.0** (commit 585805c); the `Data.bitfield` field (always present from **2.5.0**, commit bf34329) is used to decide if `hop_start == 0` is trustworthy. Source: `getHopsAway()` comment, https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/NodeDB.cpp and the `hop_start` comment in mesh.proto.
 - `next_hop` / `relay_node` header bytes: introduced with the next-hop router in **2.6** ("Since version 2.6, Meshtastic uses a different approach for direct messages", https://meshtastic.org/docs/overview/mesh-algo/ ; firmware commit "2.6 changes (#5806)" 2025-03-01 touching RadioInterface.h, https://api.github.com/repos/meshtastic/firmware/commits?path=src/mesh/RadioInterface.h). Receiver rule (RadioLibInterface.cpp): "If hop_start is not set, next_hop and relay_node are invalid (firmware <2.3)" → when `hop_start == 0` both bytes are forced to 0.
-- Before the 2.6 change, offsets 14–15 were padding/zero in the 16-byte header (the header size has been 16 since "Rename message length headers and set payload max to 255 (#4827)", 2024-09-23 — commit list above). **UNVERIFIED** that older firmware always transmitted zeros there; treat non-zero bytes 14–15 with `hop_start == 0` as "unknown", exactly as the firmware does.
+- Before the 2.6 change, offsets 14-15 were padding/zero in the 16-byte header (the header size has been 16 since "Rename message length headers and set payload max to 255 (#4827)", 2024-09-23, commit list above). **UNVERIFIED** that older firmware always transmitted zeros there; treat non-zero bytes 14-15 with `hop_start == 0` as "unknown", exactly as the firmware does.
 
 ### 1.4 Sizes
 
@@ -87,7 +87,7 @@ RX: `hop_limit = flags & 7; hop_start = (flags & 0xE0) >> 5; want_ack = !!(flags
 | TX size check (PSK) | `encoded_Data_len + 16 > 255` → `TOO_LARGE` | Router.cpp `perhapsEncode` |
 | TX size check (PKI) | `encoded_Data_len + 16 + 12 > 255` → `TOO_LARGE` | Router.cpp `perhapsEncode` |
 | `MESHTASTIC_PKC_OVERHEAD` | 12 | RadioInterface.h |
-| Docs figure | "Max. 237 bytes (excl. protobuf overhead)" — docs number differs from proto's 233; use the firmware/proto values | https://meshtastic.org/docs/overview/mesh-algo/ |
+| Docs figure | "Max. 237 bytes (excl. protobuf overhead)", docs number differs from proto's 233; use the firmware/proto values | https://meshtastic.org/docs/overview/mesh-algo/ |
 
 ### 1.5 Node numbers and IDs
 
@@ -95,7 +95,7 @@ RX: `hop_limit = flags & 7; hop_start = (flags & 0xE0) >> 5; want_ack = !!(flags
 - `isBroadcast(dest)` = `dest == 0xFFFFFFFF || dest == 1` (NodeDB.cpp).
 - Node ID string: `"!%08x"` of the 32-bit NodeNum, lower-case hex, e.g. `!0a1b2c3d` (`NodeDB::getNodeId`, `updateUser`, NodeInfoModule "Coerce user.id to be derived from the node number"). Source: NodeDB.cpp, NodeInfoModule.cpp.
 - NodeNum derivation: `(mac[2]<<24)|(mac[3]<<16)|(mac[4]<<8)|mac[5]` (last 4 bytes of the MAC); if that collides or is `0xFFFFFFFF` or `< NUM_RESERVED` a random NodeNum is picked (`NodeDB::pickNewNodeNum`, NodeDB.cpp).
-- `getLastByteOfNodeNum(num) = (num & 0xFF) ? (num & 0xFF) : 0xFF` — the byte used in `relay_node` / `next_hop`; a NodeNum ending in `0x00` is represented as `0xFF`. Source: https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/NodeDB.h line 215.
+- `getLastByteOfNodeNum(num) = (num & 0xFF) ? (num & 0xFF) : 0xFF`, the byte used in `relay_node` / `next_hop`; a NodeNum ending in `0x00` is represented as `0xFF`. Source: https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/NodeDB.h line 215.
 - Default names when unset: `long_name = "Meshtastic %04x"`, `short_name = "%04x"` of the low 16 bits (NodeDB.cpp).
 
 ### 1.6 Packet id generation
@@ -114,7 +114,7 @@ Firmware table `modemPresetToParams()` (https://raw.githubusercontent.com/meshta
 |---|---|---|---|---|---|---|---|
 | `LONG_FAST` (default) | 0 | `LongFast` | 250 | 812.5 | 11 | 5 | 1.07 kbps |
 | `LONG_SLOW` (deprecated in proto) | 1 | `LongSlow` | 125 | 406.25 | 12 | 8 | 0.18 kbps |
-| `VERY_LONG_SLOW` (deprecated) | 2 | `Invalid` (falls to `default:` → LongFast params) | 250 | 812.5 | 11 | 5 | — |
+| `VERY_LONG_SLOW` (deprecated) | 2 | `Invalid` (falls to `default:` → LongFast params) | 250 | 812.5 | 11 | 5 |, |
 | `MEDIUM_SLOW` | 3 | `MediumSlow` | 250 | 812.5 | 10 | 5 | 1.95 kbps |
 | `MEDIUM_FAST` | 4 | `MediumFast` | 250 | 812.5 | 9 | 5 | 3.52 kbps |
 | `SHORT_SLOW` | 5 | `ShortSlow` | 250 | 812.5 | 8 | 5 | 6.25 kbps |
@@ -122,7 +122,7 @@ Firmware table `modemPresetToParams()` (https://raw.githubusercontent.com/meshta
 | `LONG_MODERATE` | 7 | `LongMod` | 125 | 406.25 | 11 | 8 | 0.34 kbps |
 | `SHORT_TURBO` | 8 | `ShortTurbo` | 500 | 1625 | 7 | 5 | 21.88 kbps |
 | `LONG_TURBO` | 9 | `LongTurbo` | 500 | 1625 | 11 | 8 | 1.34 kbps |
-| `LITE_FAST/LITE_SLOW/NARROW_*/TINY_*/MEDIUM_TURBO` | 10–16 | not in `master` switch → LongFast params, name `Invalid` | — | — | — | — | **UNVERIFIED** on develop |
+| `LITE_FAST/LITE_SLOW/NARROW_*/TINY_*/MEDIUM_TURBO` | 10-16 | not in `master` switch → LongFast params, name `Invalid` |, |, |, |, | **UNVERIFIED** on develop |
 
 Notes:
 - `use_preset=false` → `sf = spread_factor`, `cr = coding_rate`, `bw = bwCodeToKHz(bandwidth)` where codes 31→31.25, 62→62.5, 200→203.125, 400→406.25, 800→812.5, 1600→1625, else literal kHz (MeshRadio.h). Channel name then defaults to `"Custom"` (Channels.cpp `getName`).
@@ -135,11 +135,11 @@ Notes:
 | Parameter | Value | Source |
 |---|---|---|
 | Sync word | **`0x2B`** (`const uint8_t syncWord = 0x2b;`) | https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/RadioLibInterface.h line 84 |
-| Preamble length | **16 symbols** (`preambleLength = 16`; "8 is default, but we use longer") — **12** for SX128x (2.4 GHz) and LR11x0 above 2 GHz | RadioInterface.h; SX128xInterface.cpp line 67; LR11x0Interface.cpp line 79 |
+| Preamble length | **16 symbols** (`preambleLength = 16`; "8 is default, but we use longer"), **12** for SX128x (2.4 GHz) and LR11x0 above 2 GHz | RadioInterface.h; SX128xInterface.cpp line 67; LR11x0Interface.cpp line 79 |
 | CRC | ON (SX126x/RF95: `setCRC(RADIOLIB_SX126X_LORA_CRC_ON)`; SX128x/LR11x0: `setCRC(2)` = 2-byte CRC). The custom CRC-polynomial block in SX126xInterface.cpp is inside `#if 0` (disabled). | SX126xInterface.cpp lines 176-201, RF95Interface.cpp 191, SX128xInterface.cpp 105, LR11x0Interface.cpp 122 |
-| Header mode | **Explicit** — firmware never calls `implicitHeader()`; RadioLib `SX126x::begin()` sets `headerType = RADIOLIB_SX126X_LORA_HEADER_EXPLICIT` | https://raw.githubusercontent.com/jgromes/RadioLib/master/src/modules/SX126x/SX126x.cpp (`begin`) |
+| Header mode | **Explicit**, firmware never calls `implicitHeader()`; RadioLib `SX126x::begin()` sets `headerType = RADIOLIB_SX126X_LORA_HEADER_EXPLICIT` | https://raw.githubusercontent.com/jgromes/RadioLib/master/src/modules/SX126x/SX126x.cpp (`begin`) |
 | IQ | Standard (RadioLib `begin()` calls `invertIQ(false)`; firmware never inverts) | same |
-| Low data-rate optimisation | Auto — RadioLib computes LDRO from BW/SF in `setModulationParams` ("BW in kHz and SF are required in order to calculate LDRO"); firmware does not force it. Exact threshold: **UNVERIFIED** (RadioLib internals not fetched in full). | same |
+| Low data-rate optimisation | Auto, RadioLib computes LDRO from BW/SF in `setModulationParams` ("BW in kHz and SF are required in order to calculate LDRO"); firmware does not force it. Exact threshold: **UNVERIFIED** (RadioLib internals not fetched in full). | same |
 | CAD symbols | 2 (sub-GHz), 4 (2.4 GHz) | RadioInterface.h `NUM_SYM_CAD` |
 | TX power | `tx_power` config; `0` → region `powerLimit`; if that is 0 → 17 dBm; clamped to region limit unless `is_licensed` | RadioInterface.cpp `applyModemConfig`, `limitPower` |
 
@@ -175,7 +175,7 @@ Source: https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/Ra
 | LORA_24 (13) | 2400.0 | 2483.5 | 100 | 10 | `wideLora = true` |
 | UNSET (0) | 902.0 | 928.0 | 100 | 30 | same as US; TX/RX disabled while UNSET |
 
-`spacing` is 0 for every region. config.proto `master` also lists ITU/EU_866/EU_874/EU_917/EU_N_868 etc. (values 27–37) that are not in firmware `master`'s table (**UNVERIFIED** on develop).
+`spacing` is 0 for every region. config.proto `master` also lists ITU/EU_866/EU_874/EU_917/EU_N_868 etc. (values 27-37) that are not in firmware `master`'s table (**UNVERIFIED** on develop).
 
 ### 2.4 Frequency-slot computation (RadioInterface.cpp `applyModemConfig`)
 
@@ -187,7 +187,7 @@ if lora.override_frequency != 0: freq = override_frequency
 freq += lora.frequency_offset
 ```
 - `channelName` = primary channel's name with the empty-name → preset-name substitution (Section 3.5), so the default is `"LongFast"`.
-- `djb2` = `hash = 5381; for c in str: hash = hash*33 + c` (uint32 wrap) — `uint32_t hash(const char*)` in RadioInterface.cpp.
+- `djb2` = `hash = 5381; for c in str: hash = hash*33 + c` (uint32 wrap), `uint32_t hash(const char*)` in RadioInterface.cpp.
 - `lora.channel_num` in config is 1-based ("channel_num is actually (channel_num - 1)"); 0 = use hash (docs: "0/UNSET, the device reverts to the older channel name hash-based algorithm", https://meshtastic.org/docs/configuration/radio/lora/).
 - `uses_default_frequency_slot` is true when `channel_num == djb2(presetName) % numChannels`.
 
@@ -249,13 +249,13 @@ The stock default channel is index 0, role PRIMARY, `psk = {0x01}`, `name = ""`,
 ### 3.2 Cipher and nonce (CryptoEngine.cpp / .h)
 
 - Mode: **AES-CTR**; `CTR<AES128>` when key length == 16, else `CTR<AES256>` (`encryptAESCtr`). Decrypt = encrypt.
-- Counter: `ctr->setIV(nonce, 16); ctr->setCounterSize(4)` — the **last 4 bytes** of the 16-byte IV are the block counter, incremented **big-endian** by the Arduino Crypto library (`CTRCommon::encrypt`: increments from index 15 downwards, https://raw.githubusercontent.com/rweather/arduinolibs/master/libraries/Crypto/CTR.cpp). Block 0 uses the nonce as-is.
+- Counter: `ctr->setIV(nonce, 16); ctr->setCounterSize(4)`, the **last 4 bytes** of the 16-byte IV are the block counter, incremented **big-endian** by the Arduino Crypto library (`CTRCommon::encrypt`: increments from index 15 downwards, https://raw.githubusercontent.com/rweather/arduinolibs/master/libraries/Crypto/CTR.cpp). Block 0 uses the nonce as-is.
 - Nonce (`initNonce(fromNode, packetId, extraNonce=0)`):
 
 | Offset | Size | Content |
 |---|---|---|
-| 0 | 8 | `packetId` as **u64 little-endian** (bytes 0–3 = id LE, bytes 4–7 = 0) |
-| 4 | 4 | (PKI only) `extraNonce` u32 LE overwrites bytes 4–7 |
+| 0 | 8 | `packetId` as **u64 little-endian** (bytes 0-3 = id LE, bytes 4-7 = 0) |
+| 4 | 4 | (PKI only) `extraNonce` u32 LE overwrites bytes 4-7 |
 | 8 | 4 | `fromNode` u32 LE |
 | 12 | 4 | block counter, starts at 0 |
 
@@ -306,7 +306,7 @@ CCM block-0 flags as implemented: `b[0] = (aad?0x40:0) | ((M-2)/2)<<3 | (L-1)`; 
 
 Header for PKI packets: `channel = 0x00`, `to` = destination NodeNum (never broadcast) (Router.cpp `perhapsEncode`: `p->channel = 0; p->pki_encrypted = true`).
 
-When the firmware *uses* PKI on TX (all must hold, Router.cpp): originated locally, not `is_licensed`, `private_key.size == 32`, `to` not broadcast, destination's 32-byte key known, portnum not in {TRACEROUTE_APP, NODEINFO_APP, ROUTING_APP, POSITION_APP}, channel name not `serial`/`gpio` (unless explicitly requested). If no key is known → error `PKI_SEND_FAIL_PUBLIC_KEY (39)` — i.e. a stock node **will not send a PSK-encrypted text DM** to a node whose key it lacks.
+When the firmware *uses* PKI on TX (all must hold, Router.cpp): originated locally, not `is_licensed`, `private_key.size == 32`, `to` not broadcast, destination's 32-byte key known, portnum not in {TRACEROUTE_APP, NODEINFO_APP, ROUTING_APP, POSITION_APP}, channel name not `serial`/`gpio` (unless explicitly requested). If no key is known → error `PKI_SEND_FAIL_PUBLIC_KEY (39)`, i.e. a stock node **will not send a PSK-encrypted text DM** to a node whose key it lacks.
 
 When a receiver *tries* PKI decryption (Router.cpp `perhapsDecode`): `channel == 0 && to == us && to != 0 && !broadcast && sender known with public_key.size > 0 && our key present && rawSize > 12`. Otherwise it falls through to the PSK loop.
 Legacy DM rejection: a PSK-decrypted packet addressed to us with `portnum == TEXT_MESSAGE_APP` is **rejected** unless `owner.is_licensed` ("Rejecting legacy DM"). ACK/routing and other portnums via PSK DM still work.
@@ -340,7 +340,7 @@ Originator sets `hop_start = hop_limit` and `relay_node = lastByte(ourNodeNum)` 
 
 ### 4.2 Managed flooding (FloodingRouter.cpp / NextHopRouter.cpp `perhapsRebroadcast`)
 
-A node rebroadcasts a received packet iff: not to us, not from us, `hop_limit > 0`, `id != 0`, node is a rebroadcaster (role ≠ CLIENT_MUTE and `rebroadcast_mode ≠ NONE`), and (`next_hop == 0` or `next_hop == lastByte(ourNodeNum)`). It decrements `hop_limit` (unless a "favorite ROUTER/CLIENT_BASE-to-ROUTER" exception applies, `Router::shouldDecrementHopLimit`), sets `relay_node` to itself, keeps `from`/`id`/`hop_start`/payload unchanged, and enqueues with the SNR-weighted delay (2.6). While waiting it cancels the rebroadcast if it hears another node's copy (`perhapsCancelDupe`) — unless its role is ROUTER/ROUTER_LATE (always rebroadcast; ROUTER_LATE moves to the late window) or CLIENT_BASE for favourite nodes. If a later copy arrives with a *higher* `hop_limit`, the queued copy is replaced ("hop_limit upgrade", PacketHistory/FloodingRouter).
+A node rebroadcasts a received packet iff: not to us, not from us, `hop_limit > 0`, `id != 0`, node is a rebroadcaster (role ≠ CLIENT_MUTE and `rebroadcast_mode ≠ NONE`), and (`next_hop == 0` or `next_hop == lastByte(ourNodeNum)`). It decrements `hop_limit` (unless a "favorite ROUTER/CLIENT_BASE-to-ROUTER" exception applies, `Router::shouldDecrementHopLimit`), sets `relay_node` to itself, keeps `from`/`id`/`hop_start`/payload unchanged, and enqueues with the SNR-weighted delay (2.6). While waiting it cancels the rebroadcast if it hears another node's copy (`perhapsCancelDupe`), unless its role is ROUTER/ROUTER_LATE (always rebroadcast; ROUTER_LATE moves to the late window) or CLIENT_BASE for favourite nodes. If a later copy arrives with a *higher* `hop_limit`, the queued copy is replaced ("hop_limit upgrade", PacketHistory/FloodingRouter).
 
 ### 4.3 Duplicate detection (PacketHistory.cpp)
 
@@ -355,7 +355,7 @@ Key = `(sender = getFrom(p), id)`. Record: `sender, id, rxTimeMsec, next_hop, ho
 ### 4.5 Reliable delivery, ACK/NAK (ReliableRouter.cpp, RoutingModule.cpp, MeshModule.cpp)
 
 - `want_ack` unicast: sender retransmits up to `NUM_RELIABLE_RETX = 3` times at `getRetransmissionMsec` intervals; on exhaustion generates a local NAK `MAX_RETRANSMIT (5)`. Docs: "resent a maximum of three times" (mesh-algo).
-- Broadcast `want_ack` (API side): satisfied by an **implicit ACK** — hearing any node rebroadcast our packet (`from == us`) (ReliableRouter `shouldFilterReceived`).
+- Broadcast `want_ack` (API side): satisfied by an **implicit ACK**, hearing any node rebroadcast our packet (`from == us`) (ReliableRouter `shouldFilterReceived`).
 - ACK/NAK packet (`MeshModule::allocAckNak`): `portnum = ROUTING_APP (5)`, payload = `Routing{ error_reason = err }` (field 3 varint). The firmware sets `which_variant = error_reason_tag`, and nanopb encodes a oneof member whenever `which_variant == tag` regardless of its value (`encode_field`, https://raw.githubusercontent.com/nanopb/nanopb/master/pb_encode.c), so a plain ACK payload is exactly the 2 bytes `18 00` (`NONE = 0`). A robust decoder should still accept an empty `Routing` as ACK. Other fields: `Data.request_id = original id`, `priority = ACK (120)`, `to = original from`, same channel index as the request, `hop_limit = getHopLimitForResponse()` (≈ `hops_used + 2`, or 0 if received directly from a 0-hop sender; else default).
 - Receiver ACK rule: any decoded `want_ack` packet to us that is not itself an ACK/reply gets an ACK; encrypted-undecodable `want_ack` to us → NAK `NO_CHANNEL (6)` on the primary channel; PKI-looking from unknown key → `PKI_UNKNOWN_PUBKEY (35)`.
 - `Routing.Error` values: NONE 0, NO_ROUTE 1, GOT_NAK 2, TIMEOUT 3, NO_INTERFACE 4, MAX_RETRANSMIT 5, NO_CHANNEL 6, TOO_LARGE 7, NO_RESPONSE 8, DUTY_CYCLE_LIMIT 9, BAD_REQUEST 32, NOT_AUTHORIZED 33, PKI_FAILED 34, PKI_UNKNOWN_PUBKEY 35, ADMIN_BAD_SESSION_KEY 36, ADMIN_PUBLIC_KEY_UNAUTHORIZED 37, RATE_LIMIT_EXCEEDED 38, PKI_SEND_FAIL_PUBLIC_KEY 39 (mesh.proto).
@@ -363,7 +363,7 @@ Key = `(sender = getFrom(p), id)`. Record: `sender, id, rxTimeMsec, next_hop, ho
 
 ### 4.6 Traceroute (TRACEROUTE_APP = 70, TraceRouteModule.cpp, mesh.proto `RouteDiscovery`)
 
-Payload `RouteDiscovery{ repeated fixed32 route = 1; repeated int32 snr_towards = 2; repeated fixed32 route_back = 3; repeated int32 snr_back = 4; }`. Each relay appends its NodeNum and the received SNR ×4 (int8; `INT8_MIN` = unknown) to `route`/`snr_towards` on the way out (`request_id == 0`) and to `route_back`/`snr_back` on the reply; unknown hops are inserted as `NODENUM_BROADCAST` (`insertUnknownHops`). Relays therefore **re-encrypt** traceroute packets (they modify the payload) — the only portnum where ciphertext changes per hop.
+Payload `RouteDiscovery{ repeated fixed32 route = 1; repeated int32 snr_towards = 2; repeated fixed32 route_back = 3; repeated int32 snr_back = 4; }`. Each relay appends its NodeNum and the received SNR ×4 (int8; `INT8_MIN` = unknown) to `route`/`snr_towards` on the way out (`request_id == 0`) and to `route_back`/`snr_back` on the reply; unknown hops are inserted as `NODENUM_BROADCAST` (`insertUnknownHops`). Relays therefore **re-encrypt** traceroute packets (they modify the payload), the only portnum where ciphertext changes per hop.
 
 ---
 
@@ -380,7 +380,7 @@ Payload `RouteDiscovery{ repeated fixed32 route = 1; repeated int32 snr_towards 
 | NODEINFO_APP | 4 | `User` |
 | ROUTING_APP | 5 | `Routing` |
 | ADMIN_APP | 6 | AdminMessage |
-| TEXT_MESSAGE_COMPRESSED_APP | 7 | Unishox2 text — the compression code in Router.cpp is commented out ("Not actually used"); never emitted by current firmware |
+| TEXT_MESSAGE_COMPRESSED_APP | 7 | Unishox2 text, the compression code in Router.cpp is commented out ("Not actually used"); never emitted by current firmware |
 | WAYPOINT_APP | 8 | Waypoint |
 | AUDIO_APP | 9 | codec2 (2.4 GHz only) |
 | DETECTION_SENSOR_APP | 10 | text (displayed like a text message) |
@@ -415,10 +415,10 @@ Payload `RouteDiscovery{ repeated fixed32 route = 1; repeated int32 snr_towards 
 | ATAK_FORWARDER | 257 | |
 | MAX | 511 | |
 
-"Text" for display purposes = `TEXT_MESSAGE_APP || DETECTION_SENSOR_APP || ALERT_APP` (+ RANGE_TEST_APP when that module is enabled) — `MeshService::isTextPayload`, https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/MeshService.h.
+"Text" for display purposes = `TEXT_MESSAGE_APP || DETECTION_SENSOR_APP || ALERT_APP` (+ RANGE_TEST_APP when that module is enabled), `MeshService::isTextPayload`, https://raw.githubusercontent.com/meshtastic/firmware/master/src/mesh/MeshService.h.
 `CORE_PORTNUMS_ONLY` rebroadcast mode whitelist (Router.cpp): 1, 7, 3, 4, 5, 67, 6, 11, 12, 8, 65, 70, 35.
 
-### 5.2 Protobuf wire encoding — minimal hand codec
+### 5.2 Protobuf wire encoding, minimal hand codec
 
 Wire format (standard protobuf): each field = varint key `(field_number << 3) | wire_type`, then value. Wire types used here: 0 = varint (int32/uint32/sint32/bool/enum; sint32 is ZigZag), 2 = length-delimited (bytes/string/embedded message/packed repeated), 5 = 32-bit fixed (`fixed32`/`sfixed32`/`float`, little-endian). proto3 omits fields with default value unless marked `optional` (then presence is explicit). Unknown fields must be skipped. Repeated numeric fields may arrive packed (wire type 2) or unpacked.
 
@@ -481,7 +481,7 @@ Wire format (standard protobuf): each field = varint key `(field_number << 3) | 
 
 **`Routing`** (payload of ROUTING_APP): oneof `variant` { `route_request = 1` (RouteDiscovery, len), `route_reply = 2` (RouteDiscovery, len), `error_reason = 3` (enum Error, varint, key `0x18`) }.
 
-**`RouteDiscovery`**: see 4.6 (fields 1–4; fixed32 lists may be packed).
+**`RouteDiscovery`**: see 4.6 (fields 1-4; fixed32 lists may be packed).
 
 **`MeshPacket`** (API/MQTT envelope, *not* on air): from=1 fixed32, to=2 fixed32, channel=3 uint32, decoded=4 (Data), encrypted=5 (bytes), id=6 fixed32, rx_time=7 optional fixed32, rx_snr=8 float, hop_limit=9, want_ack=10, priority=11, rx_rssi=12 optional int32, delayed=13 (depr), via_mqtt=14, hop_start=15, public_key=16 bytes, pki_encrypted=17, next_hop=18, relay_node=19, tx_after=20, transport_mechanism=21, xeddsa_signed=22. Priority enum: UNSET 0, MIN 1, BACKGROUND 10, DEFAULT 64, RELIABLE 70, RESPONSE 80, HIGH 100, ALERT 110, ACK 120, MAX 127.
 
@@ -518,18 +518,18 @@ Preconditions at the PHY (Section 2): sync word 0x2B, explicit header, CRC on, p
 1. `len >= 16` (firmware drops shorter) and `len <= 255`.
 2. `from != 0` (firmware drops), `from != 0xFFFFFFFF` (never a valid sender; **UNVERIFIED** as an explicit firmware check, but the broadcast value is reserved).
 3. `to` is `0xFFFFFFFF` or a plausible unicast NodeNum (`to != 0`; `to == 1` is never sent on LoRa).
-4. Flags: `hop_limit <= 7` is always true (3 bits). If `hop_start != 0` then require `hop_start >= hop_limit` (the firmware only ever decrements) — a violation means corruption/spoofing. `hop_start == 0` is legal (pre-2.3 firmware or an explicit 0-hop packet).
-5. If `hop_start == 0`, ignore bytes 14–15. Otherwise `relay_node` should be non-zero on any frame from ≥2.6 firmware (originators set it to their own last byte, relays overwrite it). For a frame you receive *directly* from its originator, `relay_node == lastByte(from)` (or `0xFF` if that byte is 0).
+4. Flags: `hop_limit <= 7` is always true (3 bits). If `hop_start != 0` then require `hop_start >= hop_limit` (the firmware only ever decrements), a violation means corruption/spoofing. `hop_start == 0` is legal (pre-2.3 firmware or an explicit 0-hop packet).
+5. If `hop_start == 0`, ignore bytes 14-15. Otherwise `relay_node` should be non-zero on any frame from ≥2.6 firmware (originators set it to their own last byte, relays overwrite it). For a frame you receive *directly* from its originator, `relay_node == lastByte(from)` (or `0xFF` if that byte is 0).
 6. `channel` byte: compare against the hashes of channels you know (default LongFast = `0x08`; the other preset hashes are in 3.4). `0x00` with a unicast `to` ⇒ probably PKI (payload ≥ 13 bytes, last 12 = tag+extra nonce).
 7. Decrypt with the default key/nonce and parse `Data`: success ⇔ protobuf parses **and** `portnum != 0` **and** (recommended) the message consumes exactly the payload with only known/plausible fields. This is the same test the firmware uses ("bad psk?") and is strong evidence: a random 8+ byte ciphertext decrypting to a valid `Data` with a known portnum is very unlikely.
 8. `id != 0` for anything the mesh will flood; duplicates keyed on `(from, id)`.
-9. `want_ack` set together with `to == 0xFFFFFFFF` never happens on air (firmware clears it) — treat as suspicious, not fatal.
+9. `want_ack` set together with `to == 0xFFFFFFFF` never happens on air (firmware clears it), treat as suspicious, not fatal.
 
 ### 7.2 Transmitting a text message on the default LongFast channel
 
 1. PHY: region slot (EU_868 → 869.525 MHz; US → 906.875 MHz), BW 250 kHz, SF 11, CR 4/5, sync word 0x2B, preamble 16, CRC on, explicit header, TX power ≤ region limit.
-2. Build `Data`: `08 01` (portnum 1) · `12 <len> <utf8>` · `48 00` (bitfield present, 0 — mirrors stock firmware; `48 02` if you want `want_response`). Keep payload ≤ 233 bytes and total encoded ≤ 239.
-3. Choose `id` (non-zero, unique per sender), `from` = your NodeNum (announce it via NODEINFO first so peers show a name; otherwise they display `!xxxxxxxx`/short id — **UNVERIFIED** exact fallback text), `to = 0xFFFFFFFF`.
+2. Build `Data`: `08 01` (portnum 1) · `12 <len> <utf8>` · `48 00` (bitfield present, 0, mirrors stock firmware; `48 02` if you want `want_response`). Keep payload ≤ 233 bytes and total encoded ≤ 239.
+3. Choose `id` (non-zero, unique per sender), `from` = your NodeNum (announce it via NODEINFO first so peers show a name; otherwise they display `!xxxxxxxx`/short id, **UNVERIFIED** exact fallback text), `to = 0xFFFFFFFF`.
 4. Encrypt with AES-128-CTR, key = `defaultpsk`, nonce = `[id LE u32][00 00 00 00][from LE u32][00 00 00 00]`, counter in the last 4 bytes (big-endian increment).
 5. Header: `to LE, from LE, id LE, flags = 0x63 (hop_limit 3, hop_start 3), channel = 0x08, next_hop = 0x00, relay_node = lastByte(from) or 0xFF`.
 6. Wait `getTxDelayMsec()`-style random backoff and perform CAD before keying up (2.6); observe the region duty cycle.
@@ -538,7 +538,7 @@ Preconditions at the PHY (Section 2): sync word 0x2B, explicit header, CRC on, p
 
 ### 7.3 Worked test vector (default LongFast, AES-128-CTR)
 
-Generated locally with the `cryptography` library (AES-CTR over the 16-byte nonce, big-endian counter — identical to the Arduino library for packets < 2^32 blocks) strictly following the firmware layout above. **Derived, not captured from a device** — validate once against a real node before relying on it.
+Generated locally with the `cryptography` library (AES-CTR over the 16-byte nonce, big-endian counter, identical to the Arduino library for packets < 2^32 blocks) strictly following the firmware layout above. **Derived, not captured from a device**, validate once against a real node before relying on it.
 
 ```
 from       = 0x0A1B2C3D      to = 0xFFFFFFFF      id = 0x12345678
@@ -608,8 +608,8 @@ ciphertext = 7d 57 7f 24 a0 b2 39 42 10 e6 fb 31 19 1d c3 9f be 5d 13 7f d7 ee f
 ### UNVERIFIED
 
 - Exact LDRO threshold used by RadioLib (auto mode confirmed, value not fetched).
-- Behaviour/values of presets 10–16 (`LITE_*`, `NARROW_*`, `TINY_*`, `MEDIUM_TURBO`) and regions 27–37 on the `develop` branch.
-- Whether pre-2.6 firmware always transmitted zeros in header bytes 14–15.
+- Behaviour/values of presets 10-16 (`LITE_*`, `NARROW_*`, `TINY_*`, `MEDIUM_TURBO`) and regions 27-37 on the `develop` branch.
+- Whether pre-2.6 firmware always transmitted zeros in header bytes 14-15.
 - XEdDSA signature input encoding (develop).
 - Exact on-screen fallback name for an unknown node, and any client still emitting `TEXT_MESSAGE_COMPRESSED_APP`.
 - Airtime/duty-cycle accounting internals (only the region percentages and the 40 % NodeInfo threshold were verified).

@@ -1,4 +1,4 @@
-# MeshCore LoRa Mesh Protocol — Reference Notes for a Rust Adapter
+# MeshCore LoRa Mesh Protocol, Reference Notes for a Rust Adapter
 
 > **Hardware validation (2026-09-16):** a Heltec V3 with official companion firmware v1.17.1 confirmed the EU/UK defaults 869.618 MHz / BW 62.5 / SF8 / CR 4/8, the Public channel secret and its hash byte `0x11`, ADVERT signature verification and GRP_TXT encrypt/decrypt in both directions (see docs/INTEROP.md).
 
@@ -147,7 +147,7 @@ public key** (`Identity::copyHashTo()`: "hash is just prefix of pub_key", Identi
 Flood packets go out with hop count 0 and the sender's chosen hash size; each forwarding repeater
 appends its own prefix (§5). Direct packets carry the full pre-computed path of *repeater* hashes;
 each repeater removes itself from the front before re-sending (§5). `path_len == 0` with
-`ROUTE_TYPE_DIRECT` means "zero-hop" — neighbours only, never forwarded (`Mesh::sendZeroHop`).
+`ROUTE_TYPE_DIRECT` means "zero-hop", neighbours only, never forwarded (`Mesh::sendZeroHop`).
 
 ### 1.5 Payload
 
@@ -193,7 +193,7 @@ shape and the same `RADIOLIB_SX126X_SYNC_WORD_PRIVATE` constant.
 | Header | explicit (RadioLib default; no `implicitHeader()` call found) | CustomSX1262.h (UNVERIFIED that no board overrides it) |
 | Coding rate | `LORA_CR` build flag, else RadioLib default; repeater example fallback `#define LORA_CR 5` | repeater MyMesh.cpp lines 15-16 |
 | TX power | `LORA_TX_POWER` build flag, e.g. Heltec V3 = 22 dBm; repeater fallback 20 dBm; companion clamps to `-9..MAX_LORA_TX_POWER` | heltec_v3.ini line 20; repeater MyMesh.cpp line 19; companion MyMesh.cpp line 947 |
-| Allowed ranges (companion prefs sanitiser) | freq 150–2500 MHz, BW 7.8–500 kHz, SF 5–12, CR 5–8 | companion MyMesh.cpp lines 945-948 |
+| Allowed ranges (companion prefs sanitiser) | freq 150-2500 MHz, BW 7.8-500 kHz, SF 5-12, CR 5-8 | companion MyMesh.cpp lines 945-948 |
 
 ### 2.2 Default frequency / BW / SF
 
@@ -207,7 +207,7 @@ official sources do state:
 | USA/Canada recommended preset | **910.525 MHz, SF7, BW 62.5, CR5** | faq.md line 192 ("USA/Canada (Recommended) preset is 910.525MHz, SF7, BW62.5, CR5") |
 | Trend | "many regions have moved to the 'narrow' setting, aka using BW62.5 and a lower SF number (instead of the original SF11)" | faq.md lines 192-194 |
 | Bands supported | 868 MHz (UK/EU), 915 MHz (NZ/AU/US), also 433 MHz devices | faq.md lines 120, 188 |
-| EU/UK preset 869.525 MHz, BW 250, SF 11, CR 5 (original) | **UNVERIFIED** — only found in a web-search summary of third-party sites, not in any fetched official file. Treat as community knowledge. |
+| EU/UK preset 869.525 MHz, BW 250, SF 11, CR 5 (original) | **UNVERIFIED**, only found in a web-search summary of third-party sites, not in any fetched official file. Treat as community knowledge. |
 
 Practical consequence for an adapter: the modulation must be configured by the operator per mesh;
 detection code should not assume a fixed frequency.
@@ -257,7 +257,7 @@ the other even on the same frequency/BW/SF.
   `rweather/Crypto @ ^0.4.0` in platformio.ini) or the nRF52 CC310 hardware path. Both are standard
   RFC 8032 Ed25519, so any Rust Ed25519 crate (`ed25519-dalek`) interoperates.
 - `LocalIdentity::validatePrivateKey` rejects keys whose derived public key starts with `0x00` or
-  `0xFF` (Identity.cpp) — so node hash bytes 0x00/0xFF should not appear for locally generated
+  `0xFF` (Identity.cpp), so node hash bytes 0x00/0xFF should not appear for locally generated
   identities (imported ones are checked too).
 
 ### 3.2 ADVERT payload layout (Mesh.cpp `createAdvert`, payloads.md)
@@ -269,7 +269,7 @@ the other even on the same frequency/BW/SF.
 | 36 | 64 | Ed25519 signature |
 | 100 | 0..32 | app_data (`MAX_ADVERT_DATA_SIZE = 32`; receiver truncates longer data to 32 before verifying) |
 
-**What is signed**: `message = pub_key(32) || timestamp(4, LE) || app_data(app_data_len)` — exactly the
+**What is signed**: `message = pub_key(32) || timestamp(4, LE) || app_data(app_data_len)`, exactly the
 payload with the 64 signature bytes cut out (Mesh.cpp `createAdvert` and the verify block in
 `onRecvPacket` case `PAYLOAD_TYPE_ADVERT`). Receivers: reject if `payload_len < 100`, ignore if
 pubkey == self, dedup, then verify; invalid signature → packet is dropped and **not** re-flooded.
@@ -344,7 +344,7 @@ TXT_MSG plaintext (`composeMsgPacket`, BaseChatMesh.cpp; payloads.md):
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 4 | sender timestamp u32 LE (also serves as uniqueness salt) |
-| 4 | 1 | `(txt_type << 2) \| (attempt & 3)` — upper 6 bits type, lower 2 bits attempt 0..3 |
+| 4 | 1 | `(txt_type << 2) \| (attempt & 3)`, upper 6 bits type, lower 2 bits attempt 0..3 |
 | 5 | n | text, UTF-8; sender includes the terminating NUL (`memcpy(text, len+1)`), receiver re-terminates at `len` anyway |
 | 5+n+1 | 1 | optional: if `attempt > 3`, an extra NUL then the raw attempt byte hidden after the text |
 
@@ -361,7 +361,7 @@ PATH plaintext (`createPathReturn`, Mesh.cpp; payloads.md):
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 1 | `path_len` byte (same encoding as the packet-level `path_len`: size code in bits 6-7, count in 0-5) |
-| 1 | count·size | path hashes — the route the original packet took **to** the sender of the PATH (i.e. the reciprocal route) |
+| 1 | count·size | path hashes, the route the original packet took **to** the sender of the PATH (i.e. the reciprocal route) |
 | next | 1 | `extra_type` (low 4 bits; a `PAYLOAD_TYPE_*`, e.g. ACK or RESPONSE; `0xFF` dummy when no extra) |
 | next | rest | `extra` bytes (an ACK's 4/6 bytes, or a RESPONSE body); when no extra: 4 random bytes for hash uniqueness |
 
@@ -406,10 +406,10 @@ type ranges are allocated in docs/number_allocations.md (`0000-00FF` internal, `
 
 | Item | Value |
 |------|-------|
-| Name | `"Public"` (`addChannel("Public", PUBLIC_GROUP_PSK)` — "pre-configure Andy's public channel") |
+| Name | `"Public"` (`addChannel("Public", PUBLIC_GROUP_PSK)`, "pre-configure Andy's public channel") |
 | PSK base64 | `izOH6cXN6mrJ5e26oRXNcg==` |
 | PSK hex (16 bytes) | `8b3387e9c5cdea6ac9e5edbaa115cd72` (matches the `meshcore://channel/add?name=Public&secret=8b33…` example in qr_codes.md) |
-| Channel hash byte | `0x11` — computed locally as `SHA256(psk16)[0]` = `11 55 f1 87 …`; derived value, not stated in any doc |
+| Channel hash byte | `0x11`, computed locally as `SHA256(psk16)[0]` = `11 55 f1 87 …`; derived value, not stated in any doc |
 
 ### 4.5 ACK (Mesh.cpp `createAck`, BaseChatMesh.cpp, payloads.md)
 
@@ -418,7 +418,7 @@ type ranges are allocated in docs/number_allocations.md (`0000-00FF` internal, `
   decrypted TXT_MSG (`timestamp || flags || text`, without the NUL) and `sender_pubkey` is the
   **message author's** key (receiver: `sha256(ack_hash, 4, data, 5 + text_len, from.id.pub_key,
   32)`; sender: `sha256(&expected_ack, 4, temp, 5 + text_len, self_id.pub_key, 32)`). payloads.md
-  calls this "CRC checksum of message timestamp, text, and sender pubkey" — it is a truncated SHA-256.
+  calls this "CRC checksum of message timestamp, text, and sender pubkey", it is a truncated SHA-256.
 - Newer firmware appends 2 bytes: `ack[4] = data[5+text_len+1]` (the hidden extended-attempt byte)
   and `ack[5]` = random (BaseChatMesh.cpp lines 242-247) → 6-byte ACK payload; the matcher only
   compares the first 4 bytes (`memcmp(data, &expected_ack, 4)`).
@@ -557,7 +557,7 @@ Flood: `500 + 16 × airtime_ms`; direct: `500 + (airtime × 6 + 250) × (hops + 
 | Companion radio | 1 (chat) | BLE/USB/Wi-Fi bridge to the phone/web app using the frame protocol in `docs/companion_protocol.md`. Holds contacts (`MAX_CONTACTS` 32 + 8 anon slots) and channels (`MAX_GROUP_CHANNELS`, 40 on Heltec V3 builds, 1 on the minimal build; heltec_v3.ini). Does **not** repeat unless the user enables repeat mode (`allowPacketForward` → `isRepeatEn()`, default false). Auto-adds contacts from adverts (`AUTO_ADD_*` bitmask). Pre-loads the "Public" channel. |
 | Repeater | 2 | Forwards flood and direct traffic (§5). Admin/guest login via ANON_REQ password; replies `RESPONSE` = `ts(4) || 0x00 (RESP_SERVER_LOGIN_OK) || 0 || is_admin || permissions || 4 random bytes || FIRMWARE_VER_LEVEL` = 13 bytes (repeater MyMesh.cpp lines 133-142). Accepts CLI commands as `TXT_TYPE_CLI_DATA` from admins, `GET_STATUS` REQ, DISCOVER control packets, TRACE, keeps a neighbour table from zero-hop adverts. Adverts as `ADV_TYPE_REPEATER` with optional location. |
 | Room server | 3 | A tiny BBS. Login: ANON_REQ with `ts || sync_since || password` (admin pw → admin; room pw → read/write; else guest if `allow_read_only`, else **no reply**). Response is the same 13-byte login OK (`reply[6]` = 1 admin / 2 read-only / 0; `reply[7]` = permissions). Posts: a client sends a plain TXT_MSG; the server stores `{author pubkey, text, post_timestamp}` in a cyclic buffer of `MAX_UNSYNCED_POSTS` (default 32; text ≤ `MAX_POST_TEXT_LEN` = 160 − 9 = 151 bytes; `examples/simple_room_server/MyMesh.h` lines 68-69, 84) and ACKs. Distribution is **push**: for each logged-in client with `post_timestamp > sync_since` (excluding the author) it sends a TXT_MSG with `txt_type = 2 (signed)`, `attempt` random, plaintext `ts(4) || flags || author_pubkey[0..4] || text`, and waits for the 4-byte ACK (`SHA256(plaintext || client_pubkey)[0..4]`), advancing `sync_since` on success (room MyMesh.cpp lines 41-130, 324-400, 433-490). Clients keep the connection alive with `REQ KEEP_ALIVE (0x02) || sync_since`. |
-| Sensor | 4 | `simple_sensor` example (not fetched) — UNVERIFIED details. |
+| Sensor | 4 | `simple_sensor` example (not fetched), UNVERIFIED details. |
 
 ---
 
@@ -590,7 +590,7 @@ Semantic checks that raise confidence to near-certainty:
 | CONTROL (11) | DIRECT, hop count 0, `payload[0] >> 4` in {8, 9}. |
 
 Path sanity: for FLOOD packets hop entries are pubkey prefixes, none should be `0x00`/`0xFF`
-(Identity.cpp key validation) — a heuristic, not a rule.
+(Identity.cpp key validation), a heuristic, not a rule.
 
 ### 7.2 Transmitting a Public-channel group text
 

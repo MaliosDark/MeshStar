@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A LoRa mesh protocol built to stay reasonable as the network grows —<br>
+  <strong>A LoRa mesh protocol built to stay reasonable as the network grows,<br>
   and a protocol-aware platform that also talks to Meshtastic and MeshCore.</strong>
 </p>
 
@@ -18,8 +18,8 @@
 ---
 
 MeshStar is a from-scratch, open-source (GPL-3.0) mesh networking stack for LoRa
-radios. It is **not** a Meshtastic or MeshCore clone — it has its own protocol,
-its own cryptography and its own routing — but it can detect, decode and talk to
+radios. It is **not** a Meshtastic or MeshCore clone, it has its own protocol,
+its own cryptography and its own routing, but it can detect, decode and talk to
 both on the air. The same `no_std` protocol engine runs on an ESP32, inside a
 discrete-time simulator, and behind a command-line tool; a Flutter phone app
 drives a node over Bluetooth.
@@ -28,17 +28,17 @@ The design rests on six ideas:
 
 | Idea | What it means in MeshStar |
 |---|---|
-| **ZRP routing** | Zone Routing Protocol adapted to LoRa: a node knows its 2-hop **zone** proactively (from beacons) and discovers farther destinations reactively with an expanding-ring, pruned, storm-protected route request. Up to **255 hops** logically — routed, not flooded. |
+| **ZRP routing** | Zone Routing Protocol adapted to LoRa: a node knows its 2-hop **zone** proactively (from beacons) and discovers farther destinations reactively with an expanding-ring, pruned, storm-protected route request. Up to **255 hops** logically, routed, not flooded. |
 | **Noise XX sessions** | Every unicast conversation runs inside a `Noise_XX_25519_ChaChaPoly_SHA256` session: mutual authentication, forward secrecy, ephemeral keys, replay window, rekeying. Relays see headers, never content. |
-| **Ed25519 identity** | The node *is* its Ed25519 key. Its 64-bit address is a hash of the public key ("open addressing") — no accounts, no phone numbers, no registry. |
+| **Ed25519 identity** | The node *is* its Ed25519 key. Its 64-bit address is a hash of the public key ("open addressing"), no accounts, no phone numbers, no registry. |
 | **LEAF nodes** | Ultra-low-power devices that sleep almost always, never relay, attach to a neighbour and fetch their mail when they wake. |
 | **ANCHOR nodes** | Always-on nodes that relay, stabilise the zone and keep an encrypted **store-and-forward mailbox** for sleeping LEAF nodes. The anchor cannot read what it stores. |
 | **Storm protection** | Unique packet ids, seen-packet cache, bounded TTL, SNR-weighted random forwarding delay, counter-based cancellation, density-based probabilistic suppression, coverage pruning, one relay per packet. |
 
 On top of the native protocol, a **protocol-adapter layer** lets a MeshStar
 device detect Meshtastic and MeshCore frames, decode them into one internal
-message model, reply through the network a message came from, and — only when
-explicitly enabled — bridge public traffic between ecosystems with policy
+message model, reply through the network a message came from, and, only when
+explicitly enabled, bridge public traffic between ecosystems with policy
 control, loop prevention and honest security labelling.
 
 ```
@@ -50,19 +50,19 @@ Sensor-08      MeshStar      MeshStar sealed envelope (Noise X), via ANCHOR
 
 ## Highlights
 
-- **One protocol engine, three targets** — the exact same `meshstar-core` runs on
+- **One protocol engine, three targets**, the exact same `meshstar-core` runs on
   hardware, in the simulator and in the CLI.
-- **End-to-end encryption by default** — per-node Noise XX sessions with forward
+- **End-to-end encryption by default**, per-node Noise XX sessions with forward
   secrecy, sealed Noise X envelopes for offline delivery. Meshtastic/MeshCore
   channel traffic is labelled honestly as shared-key, never re-presented as E2E.
-- **One radio, three networks** — a node stays on MeshStar and time-shares the
+- **One radio, three networks**, a node stays on MeshStar and time-shares the
   radio to hear Meshtastic and MeshCore too (see the [honest limits](#one-radio-three-networks)).
-- **Phone companion app** (Flutter/Android) — chat across all three networks,
+- **Phone companion app** (Flutter/Android), chat across all three networks,
   node map, route traces, node settings, and images/profile photos sent as
   ~300-byte thumbnails over the mesh.
-- **Runs on small parts** — a forwarding-only **relay** build fits an
+- **Runs on small parts**, a forwarding-only **relay** build fits an
   STM32F103 (64 KB flash) for the Specter DX-LR30 repeater.
-- **Measured, not hand-waved** — a simulator and [benchmarks](docs/BENCHMARKS.md)
+- **Measured, not hand-waved**, a simulator and [benchmarks](docs/BENCHMARKS.md)
   quantify delivery and airtime versus flooding; 201 tests including 16
   integration scenarios and cross-protocol interop.
 
@@ -163,7 +163,7 @@ with bounded retransmission and re-routing.
 is not protected. In one line: content and sender authenticity are end-to-end
 (Noise XX / Noise X); the control plane is protected by signed full beacons, the
 optional network tag, and bounded, validated state everywhere; metadata
-(addresses, sizes, timing) is visible to anyone in range. Relays never decrypt —
+(addresses, sizes, timing) is visible to anyone in range. Relays never decrypt,
 so a relay can run on a part too small for the full stack.
 
 ## Companion app
@@ -194,7 +194,7 @@ plainly, with measured numbers, in [docs/WHAT_WORKS.md](docs/WHAT_WORKS.md) and
 See [docs/COMPARISON.md](docs/COMPARISON.md) for the full, respectful comparison.
 The short version: Meshtastic and MeshCore are mature, widely deployed and easy
 to use, and MeshStar can talk to both. MeshStar exists because its behaviour is
-meant to be *measurable* and *bounded* as the network grows — routed instead of
+meant to be *measurable* and *bounded* as the network grows, routed instead of
 flooded unicast, sessions with forward secrecy instead of static channel keys,
 first-class ultra-low-power nodes with offline delivery, and explicit storm
 control with numbers behind it ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)).

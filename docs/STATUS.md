@@ -1,4 +1,4 @@
-# MeshStar — Estado del proyecto y trabajo pendiente
+# MeshStar, Estado del proyecto y trabajo pendiente
 
 Instantánea: 2026-09-16 (fin de la segunda sesión de reconstrucción). Léelo entero
 antes de tocar código; `CLAUDE.md` tiene las reglas del repositorio.
@@ -20,10 +20,10 @@ antes de tocar código; `CLAUDE.md` tiene las reglas del repositorio.
 
 ## 2. Resultados clave (docs/BENCHMARKS.md)
 
-Tráfico local, 2 msg/min: ZRP entrega 72/68/69/69 % a 30/100/300/1000 nodos con 10–16
-transmisiones por mensaje; flooding protegido 45/40/37/39 %; flooding puro necesita 51–250
+Tráfico local, 2 msg/min: ZRP entrega 72/68/69/69 % a 30/100/300/1000 nodos con 10-16
+transmisiones por mensaje; flooding protegido 45/40/37/39 %; flooding puro necesita 51-250
 transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo degrada
-(caso peor); ZRP sigue siendo 2–2,5× mejor que flooding protegido.
+(caso peor); ZRP sigue siendo 2-2,5× mejor que flooding protegido.
 
 ## 3. Decisiones de diseño cerradas (no reabrir sin datos del simulador)
 

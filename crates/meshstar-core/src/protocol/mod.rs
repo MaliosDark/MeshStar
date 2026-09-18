@@ -173,7 +173,7 @@ pub mod control {
     /// packet. Plaintext, TTL 1, addressed to the previous hop. It only
     /// suppresses a retransmission, so it needs no authentication.
     pub const LINK_ACK: u8 = 8;
-    /// Route trace request, plaintext: `[TRACE_REQ][short id u16]*` — every
+    /// Route trace request, plaintext: `[TRACE_REQ][short id u16]*`, every
     /// relay appends its own short id on the way; the destination answers
     /// with `TRACE_REP` carrying the list. Diagnostics only (unauthenticated,
     /// like a traceroute).
