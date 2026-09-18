@@ -1,4 +1,7 @@
+
 import 'package:flutter/material.dart';
+
+import '../protocol/thumb.dart' as th;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -65,6 +68,7 @@ class _ThreadPageState extends State<ThreadPage> {
                   decoration: InputDecoration(hintText: 'Message ${t.title}…', border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(24))), contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
                 ),
               ),
+              IconButton(onPressed: () => _attach(store, t), icon: const Icon(Icons.add_photo_alternate_outlined)),
               IconButton.filled(onPressed: () => _send(store, t), icon: const Icon(Icons.send)),
             ]),
           ),
@@ -78,6 +82,30 @@ class _ThreadPageState extends State<ThreadPage> {
     if (text.isEmpty) return;
     _ctl.clear();
     store.sendText(t, text);
+  }
+
+  Future<void> _attach(Store store, Thread t) async {
+    if ((t.target?.proto ?? p.Proto.meshStar) != p.Proto.meshStar) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Images work on MeshStar only (E2E). Foreign channels carry text.')));
+      return;
+    }
+    final asset = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => Column(mainAxisSize: MainAxisSize.min, children: [
+        const Padding(padding: EdgeInsets.all(12), child: Text('Pick an image to send as a ~40x40 thumbnail')),
+        Wrap(spacing: 12, runSpacing: 12, alignment: WrapAlignment.center, children: [
+          for (final (path, name) in th.sampleImages)
+            InkWell(onTap: () => Navigator.pop(context, path), child: Column(mainAxisSize: MainAxisSize.min, children: [Image.asset(path, width: 72, height: 72), Text(name)])),
+        ]),
+        const SizedBox(height: 20),
+      ]),
+    );
+    if (asset == null) return;
+    final thumb = await th.encodeFromAsset(asset, edge: 40);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sending ${thumb.length} B thumbnail…')));
+    await store.sendImage(t, thumb);
   }
 }
 
@@ -110,7 +138,8 @@ class _Bubble extends StatelessWidget {
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.only(topLeft: const Radius.circular(16), topRight: const Radius.circular(16), bottomLeft: Radius.circular(m.mine ? 16 : 4), bottomRight: Radius.circular(m.mine ? 4 : 16))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
           if (showSender && !m.mine) Text(m.fromName.isNotEmpty ? m.fromName : (m.from?.short ?? ''), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: protoColor(m.from?.proto ?? p.Proto.unknown))),
-          Text(m.text, style: const TextStyle(fontSize: 15)),
+          if (m.image != null) Padding(padding: const EdgeInsets.only(bottom: 4), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: th.ThumbView(m.image!, size: 160))),
+          if (m.text.isNotEmpty) Text(m.text, style: const TextStyle(fontSize: 15)),
           const SizedBox(height: 4),
           Row(mainAxisSize: MainAxisSize.min, children: [
             SecurityChip(m.security, dense: true),

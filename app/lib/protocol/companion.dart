@@ -203,11 +203,11 @@ class ModeChanged extends Event {
 // ------------------------------------------------------------ requests
 
 class Req {
-  static const getInfo = 0x01, getNodes = 0x02, sendText = 0x03, getNetworks = 0x04, setMode = 0x05, getStatus = 0x06, setName = 0x07, setRole = 0x08, announce = 0x09, getMessages = 0x0A, setTime = 0x0B, reboot = 0x0C, ping = 0x0D, getSettings = 0x0E, setSettings = 0x0F, setPosition = 0x10, trace = 0x11;
+  static const getInfo = 0x01, getNodes = 0x02, sendText = 0x03, getNetworks = 0x04, setMode = 0x05, getStatus = 0x06, setName = 0x07, setRole = 0x08, announce = 0x09, getMessages = 0x0A, setTime = 0x0B, reboot = 0x0C, ping = 0x0D, getSettings = 0x0E, setSettings = 0x0F, setPosition = 0x10, trace = 0x11, sendImage = 0x12, setProfilePhoto = 0x13;
 }
 
 class Resp {
-  static const info = 0x81, node = 0x82, sendResult = 0x83, message = 0x84, delivery = 0x85, network = 0x86, status = 0x87, event = 0x88, settings = 0x89, trace = 0x8A, pong = 0x8D, end = 0x8F, error = 0xFF;
+  static const info = 0x81, node = 0x82, sendResult = 0x83, message = 0x84, delivery = 0x85, network = 0x86, status = 0x87, event = 0x88, settings = 0x89, trace = 0x8A, image = 0x8B, pong = 0x8D, end = 0x8F, error = 0xFF;
 }
 
 /// Persistent node settings (role, profile and beacon interval apply after
@@ -234,6 +234,11 @@ class _W {
   void u16(int v) => _b.addAll([v & 0xFF, (v >> 8) & 0xFF]);
   void u32(int v) => _b.addAll([v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF]);
   void i32(int v) => u32(v & 0xFFFFFFFF);
+  void blob16(List<int> b) {
+    final n = b.length > 65535 ? 65535 : b.length;
+    u16(n);
+    _b.addAll(b.sublist(0, n));
+  }
   void bytes(List<int> b) {
     final n = b.length > 255 ? 255 : b.length;
     _b.add(n);
@@ -281,6 +286,13 @@ class _R {
     return v > 32767 ? v - 65536 : v;
   }
   int u32() => u8() | (u8() << 8) | (u8() << 16) | (u8() << 24);
+  Uint8List blob16() {
+    final n = u16();
+    if (p + n > d.length) throw const FormatException('truncated');
+    final out = Uint8List.sublistView(d, p, p + n);
+    p += n;
+    return out;
+  }
   int i32() {
     final v = u32();
     return v > 0x7FFFFFFF ? v - 0x100000000 : v;
@@ -356,6 +368,22 @@ class SetSettings extends Request {
     w.u16(s.beaconIntervalS);
     return w.finish();
   }
+}
+
+class SendImage extends Request {
+  SendImage(this.to, this.data, {this.reliability = 1});
+  final NodeId to;
+  final Uint8List data;
+  final int reliability;
+  @override
+  Uint8List encode() => (_W(Req.sendImage)..id(to)..u8(reliability)..blob16(data)).finish();
+}
+
+class SetProfilePhoto extends Request {
+  SetProfilePhoto(this.data);
+  final Uint8List data;
+  @override
+  Uint8List encode() => (_W(Req.setProfilePhoto)..blob16(data)).finish();
 }
 
 class SetPosition extends Request {
@@ -474,6 +502,8 @@ sealed class Response {
           default:
             throw FormatException('event $k');
         }
+      case Resp.image:
+        return ImageResponse(seq: r.u32(), from: r.id(), fromName: r.str(), kind: r.u8(), rssiDbm: r.i16(), hops: r.u8(), ageS: r.u32(), data: Uint8List.fromList(r.blob16()));
       case Resp.trace:
         final to = r.id();
         final reached = r.u8() != 0;
@@ -545,6 +575,14 @@ class EndResponse extends Response {
 class Pong extends Response {
   Pong(this.n);
   final int n;
+}
+
+class ImageResponse extends Response {
+  ImageResponse({required this.seq, required this.from, required this.fromName, required this.kind, required this.rssiDbm, required this.hops, required this.ageS, required this.data});
+  final int seq, kind, rssiDbm, hops, ageS;
+  final NodeId from;
+  final String fromName;
+  final Uint8List data;
 }
 
 class TraceResponse extends Response {

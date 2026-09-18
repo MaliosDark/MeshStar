@@ -1,6 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../protocol/companion.dart' as p;
+import '../protocol/thumb.dart' as th;
 
 const kStar = Color(0xFF29C6FF);
 const kMeshtastic = Color(0xFF67EA94);
@@ -30,6 +33,21 @@ class ProtoBadge extends StatelessWidget {
       alignment: Alignment.center,
       child: proto == p.Proto.meshStar ? Icon(Icons.star_rounded, color: c, size: size * 0.6) : Text(proto.badge, style: TextStyle(color: c, fontWeight: FontWeight.w800, fontSize: size * 0.45)),
     );
+  }
+}
+
+/// Round avatar: the node's profile photo if we have one, else the badge.
+class Avatar extends StatelessWidget {
+  const Avatar(this.proto, {super.key, this.photo, this.size = 40});
+  final p.Proto proto;
+  final Uint8List? photo;
+  final double size;
+  @override
+  Widget build(BuildContext context) {
+    if (photo != null && th.Thumb.decode(photo!) != null) {
+      return ClipOval(child: SizedBox(width: size, height: size, child: th.ThumbView(photo!, size: size)));
+    }
+    return ProtoBadge(proto, size: size);
   }
 }
 

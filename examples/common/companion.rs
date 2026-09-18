@@ -30,6 +30,8 @@ pub enum CompanionAction {
     /// Store and broadcast our position (both 0 clears it).
     SetPosition(i32, i32),
     Trace(Address),
+    /// Broadcast our profile photo (thumbnail bytes) on MeshStar.
+    SetProfilePhoto(Vec<u8>),
 }
 
 /// A text the app wants sent on a foreign network (the firmware encodes it
@@ -49,11 +51,12 @@ pub struct Companion {
     /// delivery do not duplicate.
     last_pushed_seq: u32,
     next_foreign_handle: u32,
+    image_seq: u32,
 }
 
 impl Companion {
     pub fn new(firmware: &'static str) -> Self {
-        Self { framer: Framer::new(600), out: Vec::new(), firmware, mode: Mode::Native, last_pushed_seq: 0, next_foreign_handle: 0x8000_0000 }
+        Self { framer: Framer::new(600), out: Vec::new(), firmware, mode: Mode::Native, last_pushed_seq: 0, next_foreign_handle: 0x8000_0000, image_seq: 0 }
     }
 
     /// Bytes to transmit to the app (drained).
@@ -201,6 +204,33 @@ impl Companion {
                 self.push(Response::End { kind: req::SET_POSITION });
                 return (CompanionAction::SetPosition(lat_e7, lon_e7), None);
             }
+            Request::SendImage { to, reliability, data } => {
+                // Prepend the image marker; the node fragments it as a message.
+                let mut payload = alloc::vec![crate::ui::APP_IMAGE];
+                payload.extend_from_slice(&data);
+                match to {
+                    NodeId::MeshStar(a) => {
+                        let rel = match reliability {
+                            0 => Reliability::Unreliable,
+                            2 => Reliability::StoreAndForward,
+                            _ => Reliability::Acknowledged,
+                        };
+                        match node.send_message(Address(a), &payload, rel) {
+                            Ok(h) => self.push(Response::SendResult { handle: h, accepted: true, reason: 0 }),
+                            Err(_) => self.push(Response::SendResult { handle: 0, accepted: false, reason: err::QUEUE_FULL }),
+                        }
+                    }
+                    NodeId::Broadcast(Proto::MeshStar) => match node.send_broadcast(&payload) {
+                        Ok(h) => self.push(Response::SendResult { handle: h, accepted: true, reason: 0 }),
+                        Err(_) => self.push(Response::SendResult { handle: 0, accepted: false, reason: err::QUEUE_FULL }),
+                    },
+                    _ => self.push(Response::Error { code: err::UNSUPPORTED, text: "images are a MeshStar feature".into() }),
+                }
+            }
+            Request::SetProfilePhoto { data } => {
+                self.push(Response::End { kind: req::SET_PROFILE_PHOTO });
+                return (CompanionAction::SetProfilePhoto(data), None);
+            }
             Request::Trace { to } => match to {
                 NodeId::MeshStar(a) => match node.trace(Address(a)) {
                     Ok(()) => return (CompanionAction::Trace(Address(a)), None),
@@ -302,6 +332,12 @@ impl Companion {
     /// Answer GET_SETTINGS.
     pub fn settings(&mut self, st: &meshstar_companion::Settings) {
         self.push(Response::Settings(st.clone()));
+    }
+
+    /// A received image or profile photo (kind 0 attachment, 1 profile).
+    pub fn on_image(&mut self, from: Address, from_name: &str, kind: u8, data: alloc::vec::Vec<u8>, rssi_dbm: i16, hops: u8) {
+        self.image_seq = self.image_seq.wrapping_add(1);
+        self.push(Response::Image { seq: self.image_seq, from: NodeId::MeshStar(from.0), from_name: String::from(from_name), kind, data, rssi_dbm, hops, age_s: 0 });
     }
 
     pub fn mode_changed(&mut self, mode: Mode) {

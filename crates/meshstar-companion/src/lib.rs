@@ -21,6 +21,8 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+pub mod thumb;
+
 pub const PROTOCOL_VERSION: u8 = 1;
 /// Frame start byte.
 pub const START: u8 = 0xAA;
@@ -276,6 +278,11 @@ pub enum Request {
     GetSettings,
     /// Save settings; the node answers `End` and reboots to apply them.
     SetSettings(Settings),
+    /// Send a thumbnail image (see [`thumb`]) to a peer or broadcast; the
+    /// node carries it as a fragmented binary message. Answered by `SendResult`.
+    SendImage { to: NodeId, reliability: u8, data: Vec<u8> },
+    /// Broadcast this thumbnail as our profile photo on MeshStar.
+    SetProfilePhoto { data: Vec<u8> },
     /// The phone's position: the node keeps it and broadcasts it on the
     /// MeshStar network (and answers `End`). Both 0 clears it.
     SetPosition { lat_e7: i32, lon_e7: i32 },
@@ -300,6 +307,9 @@ pub enum Response {
     Pong(u32),
     Error { code: u8, text: String },
     Settings(Settings),
+    /// An image arrived. `kind` 0 = chat attachment, 1 = the sender's
+    /// profile photo. `data` is a [`thumb`] blob.
+    Image { seq: u32, from: NodeId, from_name: String, kind: u8, data: Vec<u8>, rssi_dbm: i16, hops: u8, age_s: u32 },
     /// Result of a `Trace`: the relays between us and `to`, in order.
     Trace { to: NodeId, reached: bool, hops: Vec<NodeId>, rtt_ms: u32 },
 }
@@ -322,6 +332,8 @@ pub mod req {
     pub const SET_SETTINGS: u8 = 0x0F;
     pub const SET_POSITION: u8 = 0x10;
     pub const TRACE: u8 = 0x11;
+    pub const SEND_IMAGE: u8 = 0x12;
+    pub const SET_PROFILE_PHOTO: u8 = 0x13;
 }
 
 pub mod resp {
@@ -337,6 +349,7 @@ pub mod resp {
     pub const PONG: u8 = 0x8D;
     pub const SETTINGS: u8 = 0x89;
     pub const TRACE: u8 = 0x8A;
+    pub const IMAGE: u8 = 0x8B;
     pub const ERROR: u8 = 0xFF;
 }
 
@@ -389,6 +402,11 @@ impl W {
     fn bytes(&mut self, b: &[u8]) {
         let n = b.len().min(255);
         self.0.push(n as u8);
+        self.0.extend_from_slice(&b[..n]);
+    }
+    fn blob16(&mut self, b: &[u8]) {
+        let n = b.len().min(65535);
+        self.u16(n as u16);
         self.0.extend_from_slice(&b[..n]);
     }
     fn str(&mut self, s: &str) {
@@ -481,6 +499,10 @@ impl<'a> R<'a> {
     fn str(&mut self) -> Result<String, DecodeError> {
         core::str::from_utf8(self.bytes()?).map(String::from).map_err(|_| DecodeError::BadUtf8)
     }
+    fn blob16(&mut self) -> Result<&'a [u8], DecodeError> {
+        let n = self.u16()? as usize;
+        self.take(n)
+    }
     fn id(&mut self) -> Result<NodeId, DecodeError> {
         let p = Proto::from_u8(self.u8()?);
         let b = self.bytes()?;
@@ -566,6 +588,18 @@ impl Request {
                 w.id(to);
                 w.finish()
             }
+            Self::SendImage { to, reliability, data } => {
+                let mut w = W::new(req::SEND_IMAGE);
+                w.id(to);
+                w.u8(*reliability);
+                w.blob16(data);
+                w.finish()
+            }
+            Self::SetProfilePhoto { data } => {
+                let mut w = W::new(req::SET_PROFILE_PHOTO);
+                w.blob16(data);
+                w.finish()
+            }
         }
     }
 
@@ -596,6 +630,8 @@ impl Request {
             req::SET_SETTINGS => Self::SetSettings(read_settings(&mut r)?),
             req::SET_POSITION => Self::SetPosition { lat_e7: r.i32()?, lon_e7: r.i32()? },
             req::TRACE => Self::Trace { to: r.id()? },
+            req::SEND_IMAGE => Self::SendImage { to: r.id()?, reliability: r.u8()?, data: r.blob16()?.to_vec() },
+            req::SET_PROFILE_PHOTO => Self::SetProfilePhoto { data: r.blob16()?.to_vec() },
             other => return Err(DecodeError::UnknownType(other)),
         };
         // Trailing bytes are tolerated (forward compatibility).
@@ -747,6 +783,18 @@ impl Response {
                 write_settings(&mut w, st);
                 w.finish()
             }
+            Self::Image { seq, from, from_name, kind, data, rssi_dbm, hops, age_s } => {
+                let mut w = W::new(resp::IMAGE);
+                w.u32(*seq);
+                w.id(from);
+                w.str(from_name);
+                w.u8(*kind);
+                w.i16(*rssi_dbm);
+                w.u8(*hops);
+                w.u32(*age_s);
+                w.blob16(data);
+                w.finish()
+            }
             Self::Trace { to, reached, hops, rtt_ms } => {
                 let mut w = W::new(resp::TRACE);
                 w.id(to);
@@ -818,6 +866,7 @@ impl Response {
             resp::PONG => Self::Pong(r.u32()?),
             resp::ERROR => Self::Error { code: r.u8()?, text: r.str()? },
             resp::SETTINGS => Self::Settings(read_settings(&mut r)?),
+            resp::IMAGE => Self::Image { seq: r.u32()?, from: r.id()?, from_name: r.str()?, kind: r.u8()?, rssi_dbm: r.i16()?, hops: r.u8()?, age_s: r.u32()?, data: r.blob16()?.to_vec() },
             resp::TRACE => {
                 let to = r.id()?;
                 let reached = r.u8()? != 0;
@@ -941,6 +990,8 @@ mod tests {
         roundtrip_req(Request::GetSettings);
         roundtrip_req(Request::SetPosition { lat_e7: 1, lon_e7: -2 });
         roundtrip_req(Request::Trace { to: NodeId::MeshStar([1; 8]) });
+        roundtrip_req(Request::SendImage { to: NodeId::MeshStar([2; 8]), reliability: 2, data: alloc::vec![b'T', b'H', 4, 4, 16, 4] });
+        roundtrip_req(Request::SetProfilePhoto { data: alloc::vec![1, 2, 3, 4, 5] });
         roundtrip_req(Request::SetSettings(Settings { name: "Relay".into(), role: 2, profile: 1, tx_power_dbm: 20, mode: Mode::Scan, beacon_interval_s: 120 }));
     }
 
@@ -951,6 +1002,7 @@ mod tests {
         roundtrip_resp(Response::Node(NodeEntry { id: NodeId::MeshCore(vec![0xab]), name: "~ab".into(), rssi_dbm: -104, snr_q: -8, security: Security::Opaque, hops: 1, flags: 0, last_seen_s: 0, lat_e7: 0, lon_e7: 0 }));
         roundtrip_resp(Response::Message(Message { seq: 3, from: NodeId::MeshCore(vec![0x88; 32]), from_name: "Chiripa".into(), channel: "Public".into(), text: "hola".into(), security: Security::Channel, rssi_dbm: -84, snr_q: 40, hops: 0, age_s: 5, via: "ab".into() }));
         roundtrip_resp(Response::Trace { to: NodeId::MeshStar([3; 8]), reached: true, hops: vec![NodeId::MeshStar([4; 8]), NodeId::MeshStar([5; 8])], rtt_ms: 2500 });
+        roundtrip_resp(Response::Image { seq: 9, from: NodeId::MeshStar([1; 8]), from_name: "A".into(), kind: 1, data: alloc::vec![b'T', b'H', 2, 2, 4, 0], rssi_dbm: -70, hops: 1, age_s: 3 });
         roundtrip_resp(Response::DeliveryUpdate { handle: 5, state: Delivery::Delivered, reason: 0 });
         roundtrip_resp(Response::Network(Network { proto: Proto::MeshCore, name: "Public".into(), nodes: 2, rssi_dbm: -84, frames: 10, last_seen_s: 1 }));
         roundtrip_resp(Response::Status(Status { mode: Mode::Scan, battery_mv: 3900, uptime_s: 100, neighbors: 1, zone: 2, sessions: 1, rx_frames: 5, tx_frames: 6, duty_permille: 12, unread: 1, last_rssi_dbm: -70, last_snr_q: 20 }));

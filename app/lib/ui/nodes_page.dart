@@ -35,7 +35,7 @@ class NodeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = protoColor(n.proto);
     return ListTile(
-      leading: ProtoBadge(n.proto),
+      leading: Avatar(n.proto, photo: context.watch<Store>().avatars[n.id]),
       title: Row(children: [
         Flexible(child: Text(n.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600))),
         if (n.anchor) const Padding(padding: EdgeInsets.only(left: 6), child: Icon(Icons.anchor, size: 15)),

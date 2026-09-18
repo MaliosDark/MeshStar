@@ -532,6 +532,10 @@ pub struct UiNode {
 /// Application payload of a MeshStar DATA message: text, or a position
 /// record `[0x01][lat_e7 i32 BE][lon_e7 i32 BE]` (9 bytes).
 pub const APP_POSITION: u8 = 0x01;
+/// Application payload markers: image attachment / profile photo (the rest
+/// is a `meshstar_companion::thumb` blob).
+pub const APP_IMAGE: u8 = 0x02;
+pub const APP_PROFILE: u8 = 0x03;
 
 pub fn encode_position(lat_e7: i32, lon_e7: i32) -> [u8; 9] {
     let mut b = [0u8; 9];

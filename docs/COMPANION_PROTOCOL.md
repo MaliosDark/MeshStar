@@ -93,3 +93,29 @@ can observe. MeshStar destinations get the full delivery state machine.
 Validated 2026-09-16 on a Heltec V3 with the Android app: connect, info,
 status, mode change to scan, and a `#Public` MeshCore text sent from the
 phone and transmitted by the node.
+
+## Images and profile photos
+
+A "postage stamp" thumbnail codec (`meshstar-companion::thumb`, mirrored in
+`app/lib/protocol/thumb.dart`) squeezes a picture to a few hundred bytes so
+it fits a fragmented store-and-forward message — LoRa airtime is the budget,
+not screen quality. Format `MSIMG1`: a fixed 16-colour palette (never
+transmitted), the image reduced to at most 48x48, run-length encoded. A
+40x40 thumbnail is ~200-400 bytes.
+
+* `SEND_IMAGE` (0x12): `to:id, reliability:u8, data:blob16` — the node
+  prepends the app marker `0x02` and sends it as a normal (fragmented)
+  MeshStar message. `SET_PROFILE_PHOTO` (0x13): `data:blob16` — the node
+  broadcasts it with marker `0x03` on MeshStar now and every 10 min.
+* `IMAGE` (0x8B): `seq:u32, from:id, from_name:str, kind:u8 (0 attachment,
+  1 profile), rssi:i16, hops:u8, age_s:u32, data:blob16` — a received
+  thumbnail. The app shows attachments as image bubbles and caches profile
+  photos as avatars.
+
+Images are a MeshStar feature (end-to-end encrypted): Meshtastic and MeshCore
+carry only text on their channels, so the foreign adapters do not send them.
+
+Validated 2026-09-18 phone-to-phone: a 210-byte "mountain" thumbnail picked
+on one phone, encoded, fragmented, sent over MeshStar, received and shown on
+the other. Gallery picking on the phone is a one-line `image_picker` swap;
+the offline build here uses bundled sample images.

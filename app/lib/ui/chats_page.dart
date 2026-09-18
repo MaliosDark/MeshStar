@@ -23,7 +23,7 @@ class ChatsPage extends StatelessWidget {
                 final t = threads[i];
                 return ListTile(
                   leading: Stack(children: [
-                    ProtoBadge(t.proto),
+                    Avatar(t.proto, photo: t.target == null ? null : store.avatars[t.target]),
                     if (t.channel != null) const Positioned(right: 0, bottom: 0, child: Icon(Icons.tag, size: 14)),
                   ]),
                   title: Row(children: [

@@ -23,6 +23,8 @@ class ChatMessage {
   final String fromName;
   /// Path as the protocol reports it (last relay / repeater hashes).
   final String via;
+  /// Non-null when this message is an image attachment (thumbnail bytes).
+  Uint8List? image;
   final p.Security security;
   final int rssiDbm, hops;
   int? handle;
@@ -30,8 +32,8 @@ class ChatMessage {
   int reason;
   int? seq;
 
-  Map<String, dynamic> toJson() => {'t': thread, 'x': text, 'm': mine, 'a': at.millisecondsSinceEpoch, 'f': from?.toJson(), 'n': fromName, 's': security.code, 'r': rssiDbm, 'h': hops, 'd': delivery.index, 'q': seq, 'v': via};
-  factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(thread: j['t'], text: j['x'], mine: j['m'], at: DateTime.fromMillisecondsSinceEpoch(j['a']), from: j['f'] == null ? null : p.NodeId.fromJson(j['f']), fromName: j['n'] ?? '', security: p.Security.fromCode(j['s'] ?? 0), rssiDbm: j['r'] ?? 0, hops: j['h'] ?? 0, delivery: p.Delivery.values[j['d'] ?? 0], seq: j['q'], via: j['v'] ?? '');
+  Map<String, dynamic> toJson() => {'t': thread, 'x': text, 'm': mine, 'a': at.millisecondsSinceEpoch, 'f': from?.toJson(), 'n': fromName, 's': security.code, 'r': rssiDbm, 'h': hops, 'd': delivery.index, 'q': seq, 'v': via, 'img': image == null ? null : base64Encode(image!)};
+  factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(thread: j['t'], text: j['x'], mine: j['m'], at: DateTime.fromMillisecondsSinceEpoch(j['a']), from: j['f'] == null ? null : p.NodeId.fromJson(j['f']), fromName: j['n'] ?? '', security: p.Security.fromCode(j['s'] ?? 0), rssiDbm: j['r'] ?? 0, hops: j['h'] ?? 0, delivery: p.Delivery.values[j['d'] ?? 0], seq: j['q'], via: j['v'] ?? '')..image = j['img'] == null ? null : base64Decode(j['img']);
 }
 
 /// A conversation: a contact (any network) or a channel.
@@ -68,6 +70,9 @@ class Store extends ChangeNotifier {
   p.NodeInfo? info;
   p.Status? status;
   p.Settings? settings;
+  /// Profile photos by node (thumbnail bytes), from APP_PROFILE broadcasts.
+  final Map<p.NodeId, Uint8List> avatars = {};
+  Uint8List? myAvatar;
   /// Last trace per destination.
   final Map<p.NodeId, p.TraceResponse> traces = {};
   bool sharePosition = false;
@@ -111,6 +116,13 @@ class Store extends ChangeNotifier {
     lastDeviceId = prefs.getString('device');
     lastSeq = prefs.getInt('lastSeq') ?? 0;
     sharePosition = prefs.getBool('sharePosition') ?? false;
+    final av = prefs.getString('myAvatar');
+    if (av != null) myAvatar = base64Decode(av);
+    try {
+      for (final e in (jsonDecode(prefs.getString('avatars') ?? '{}') as Map).entries) {
+        avatars[p.NodeId.fromJson(jsonDecode(e.key))] = base64Decode(e.value as String);
+      }
+    } catch (_) {}
     _initNotifications();
     if (sharePosition) _startPosition();
     try {
@@ -232,6 +244,67 @@ class Store extends ChangeNotifier {
     } catch (_) {}
   }
 
+  void _onImage(p.ImageResponse r) {
+    if (r.kind == 1) {
+      // Profile photo.
+      avatars[r.from] = r.data;
+      _saveAvatars();
+      return;
+    }
+    // Chat attachment: a message with an image, no text.
+    final key = r.from.canonical;
+    final t = threads.putIfAbsent(key, () => Thread(key: key, title: r.fromName.isNotEmpty ? r.fromName : r.from.short, proto: p.Proto.meshStar, target: r.from));
+    final at = DateTime.now();
+    final cm = ChatMessage(thread: key, text: '', mine: false, at: at, from: r.from, fromName: r.fromName, security: p.Security.e2e, rssiDbm: r.rssiDbm, hops: r.hops, seq: -r.seq)..image = r.data;
+    messages.add(cm);
+    t.unread += 1;
+    t.last = at;
+    t.preview = '📷 image';
+    if (r.ageS < 120) _notify(t, cm);
+    _save();
+    notifyListeners();
+  }
+
+  Future<void> _saveAvatars() async {
+    final prefs = await SharedPreferences.getInstance();
+    final m = <String, String>{for (final e in avatars.entries) jsonEncode(e.key.toJson()): base64Encode(e.value)};
+    await prefs.setString('avatars', jsonEncode(m));
+    notifyListeners();
+  }
+
+  Future<void> sendImage(Thread t, Uint8List thumb) async {
+    final target = t.target ?? p.NodeId.broadcast(t.proto);
+    if (target.proto != p.Proto.meshStar) {
+      log.add('images are a MeshStar feature');
+      notifyListeners();
+      return;
+    }
+    final m = ChatMessage(thread: t.key, text: '', mine: true, at: DateTime.now(), security: target.isBroadcast ? p.Security.group : p.Security.e2e)..image = thumb;
+    messages.add(m);
+    t.last = m.at;
+    t.preview = 'you: 📷 image';
+    notifyListeners();
+    try {
+      await link.send(p.SendImage(target, thumb, reliability: target.isBroadcast ? 0 : 1));
+    } catch (e) {
+      m.delivery = p.Delivery.failed;
+      log.add('image: $e');
+    }
+    _save();
+  }
+
+  Future<void> setMyAvatar(Uint8List thumb) async {
+    myAvatar = thumb;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('myAvatar', base64Encode(thumb));
+    try {
+      await link.send(p.SetProfilePhoto(thumb));
+    } catch (e) {
+      log.add('profile: $e');
+    }
+    notifyListeners();
+  }
+
   Future<void> trace(p.NodeId to) async {
     try {
       traces.remove(to);
@@ -279,6 +352,8 @@ class Store extends ChangeNotifier {
         this.info = info;
       case p.SettingsResponse(:final settings):
         this.settings = settings;
+      case p.ImageResponse():
+        _onImage(r);
       case p.TraceResponse():
         traces[r.to] = r;
         log.add(r.reached ? 'trace ${r.to.short}: ${r.hops.isEmpty ? 'direct' : r.hops.map((h) => h.short).join(' > ')} (${r.rttMs} ms)' : 'trace ${r.to.short}: no answer');

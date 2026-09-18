@@ -317,6 +317,8 @@ fn main() -> ! {
     // Our own position (from the app), broadcast every 10 minutes while set.
     let mut my_position: Option<(i32, i32)> = None;
     let mut last_position_tx = 0u64;
+    let mut my_profile: Vec<u8> = Vec::new();
+    let mut last_profile_tx = 0u64;
     let adv_name = alloc::format!("{}{}", meshstar_companion::ADV_NAME_PREFIX, &model.short_id[5..]);
     let ble_rx: core::cell::RefCell<Vec<u8>> = core::cell::RefCell::new(Vec::new());
     'ble: loop {
@@ -575,6 +577,12 @@ fn main() -> ! {
                     if let Some((lat, lon)) = ui::decode_position(payload) {
                         println!("[pos] {} at {} {}", from, lat, lon);
                         model.set_position(&meshstar_protocols::model::IdentityRef::MeshStar(*from), lat, lon);
+                    } else if payload.first() == Some(&ui::APP_IMAGE) || payload.first() == Some(&ui::APP_PROFILE) {
+                        let kind = if payload[0] == ui::APP_PROFILE { 1 } else { 0 };
+                        println!("[img] {} kind {} {} B", from, kind, payload.len() - 1);
+                        let name = alloc::format!("{:02X}{:02X}.{:02X}{:02X}", from.0[4], from.0[5], from.0[6], from.0[7]);
+                        companion.on_image(*from, &name, kind, payload[1..].to_vec(), *rssi_dbm, *hops);
+                        led_until = now + 400;
                     } else {
                         let text = core::str::from_utf8(payload).unwrap_or("<binary>");
                         println!("[msg] {} ({:?}, {} hops, {} dBm, {:.1} dB, via {:?}): {}", from, protection, hops, rssi_dbm, snr_db, relay, text);
@@ -615,6 +623,13 @@ fn main() -> ! {
                     companion.on_event(&ev);
                 }
             }
+        }
+        // Periodic profile-photo re-broadcast (so late joiners get the avatar).
+        if !my_profile.is_empty() && now.saturating_sub(last_profile_tx) >= 600_000 {
+            last_profile_tx = now;
+            let mut p = alloc::vec![ui::APP_PROFILE];
+            p.extend_from_slice(&my_profile);
+            let _ = node.send_broadcast(&p);
         }
         // Periodic position broadcast.
         if let Some((lat, lon)) = my_position {
@@ -878,6 +893,16 @@ fn main() -> ! {
                             }
                         }
                         companion::CompanionAction::Trace(dst) => println!("[trace] started to {}", dst),
+                        companion::CompanionAction::SetProfilePhoto(data) => {
+                            my_profile = data;
+                            if !my_profile.is_empty() {
+                                let mut p = alloc::vec![ui::APP_PROFILE];
+                                p.extend_from_slice(&my_profile);
+                                let _ = node.send_broadcast(&p);
+                                last_profile_tx = now;
+                            }
+                            println!("[profile] {} B", my_profile.len());
+                        }
                         companion::CompanionAction::SetSettings(st) => {
                             println!("settings: {:?} (saving, rebooting)", st);
                             save_settings(&mut flash, &st);
