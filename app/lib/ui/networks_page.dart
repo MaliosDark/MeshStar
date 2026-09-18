@@ -42,7 +42,7 @@ class NetworksPage extends StatelessWidget {
                 p.Mode.native => 'ZRP routing, E2E sessions, store-and-forward',
                 p.Mode.meshCore => '869.618 MHz · SF8 · Public channel only',
                 p.Mode.meshtastic => '869.525 MHz · LongFast (SF11) · default key',
-                p.Mode.scan => 'MeshStar + CAD sweeps of both foreign networks',
+                p.Mode.scan => 'All three: MeshStar + MeshCore reliably, Meshtastic best-effort (one radio)',
               }),
             ),
         ]),

@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../protocol/gallery_stub.dart' as gallery;
 import '../protocol/thumb.dart' as th;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -89,11 +90,21 @@ class _ThreadPageState extends State<ThreadPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Images work on MeshStar only (E2E). Foreign channels carry text.')));
       return;
     }
+    if (gallery.galleryAvailable) {
+      final bytes = await gallery.pickThumbnail();
+      if (bytes == null) return;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sending ${bytes.length} B thumbnail…')));
+      await store.sendImage(t, bytes);
+      return;
+    }
     final asset = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (_) => Column(mainAxisSize: MainAxisSize.min, children: [
-        const Padding(padding: EdgeInsets.all(12), child: Text('Pick an image to send as a ~40x40 thumbnail')),
+        const Padding(padding: EdgeInsets.fromLTRB(12, 8, 12, 4), child: Text('Pick an image to send as a ~40x40 thumbnail')),
+        const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('(Gallery picking needs an online build — see app/README)', style: TextStyle(fontSize: 11, color: Colors.white54))),
+        const SizedBox(height: 8),
         Wrap(spacing: 12, runSpacing: 12, alignment: WrapAlignment.center, children: [
           for (final (path, name) in th.sampleImages)
             InkWell(onTap: () => Navigator.pop(context, path), child: Column(mainAxisSize: MainAxisSize.min, children: [Image.asset(path, width: 72, height: 72), Text(name)])),

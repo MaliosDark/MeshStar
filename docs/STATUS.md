@@ -113,6 +113,19 @@ cargo run --release -p meshstar-sim --example debug -- 100 1800 2 zrp   # diagn�
 target/release/meshstar shell --nodes 12  # inspección interactiva
 ```
 
+## Estado honesto (ver docs/WHAT_WORKS.md)
+
+Documento nuevo `docs/WHAT_WORKS.md` con el desglose exacto de lo que
+funciona (verificado en hardware), lo parcial (recepción Meshtastic en scan:
+límite físico de una radio, 0→7-10/20 con dwell adaptativo; transmitir 20/20)
+y lo bloqueado por el entorno (teselas de mapa y galería de fotos: falta
+internet en este PC, no es del código). El texto del modo scan en la app y el
+README lo reflejan sin exagerar.
+
+Añadido: mapa offline (cuadrícula geográfica desde la cámara + caché de
+teselas en disco con path_provider, nunca en negro) y galería lista para
+compilar con red (app/lib/protocol/gallery_stub.dart, dos líneas).
+
 ## Prueba de dos teléfonos (2026-09-18)
 
 Dos teléfonos (M2, Android 7) cada uno con la app y conectado por BLE a su

@@ -1,16 +1,38 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../state/store.dart';
+import 'map_layers.dart';
 import 'nodes_page.dart';
 import 'widgets.dart';
 
 /// Nodes with a known position (own MeshStar position broadcasts,
 /// Meshtastic positions, MeshCore adverts) and traced routes between them.
-class MapPage extends StatelessWidget {
+class MapPage extends StatefulWidget {
   const MapPage({super.key});
+  @override
+  State<MapPage> createState() => _MapPageState();
+}
+
+class _MapPageState extends State<MapPage> {
+  Directory? _cacheDir;
+
+  @override
+  void initState() {
+    super.initState();
+    getTemporaryDirectory().then((d) async {
+      final dir = Directory('${d.path}/tiles');
+      try {
+        await dir.create(recursive: true);
+      } catch (_) {}
+      if (mounted) setState(() => _cacheDir = dir);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,12 +58,13 @@ class MapPage extends StatelessWidget {
       FlutterMap(
         options: const MapOptions(initialCenter: center, initialZoom: 6, backgroundColor: Color(0xFF0B1118)),
         children: [
+          const GraticuleLayer(),
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'org.meshstar.meshstar',
             keepBuffer: 4,
             panBuffer: 1,
-            errorTileCallback: (tile, error, stackTrace) => debugPrint('tile ${tile.coordinates}: $error'),
+            tileProvider: _cacheDir == null ? null : CachedTileProvider(_cacheDir!),
           ),
           PolylineLayer(polylines: lines),
           MarkerLayer(markers: [
@@ -82,7 +105,7 @@ class MapPage extends StatelessWidget {
         ),
       ),
       if (located.isEmpty && me == null)
-        const Positioned(left: 24, right: 24, bottom: 40, child: Card(child: Padding(padding: EdgeInsets.all(12), child: Text('No positions yet. MeshStar nodes appear when their phone shares a position; Meshtastic and MeshCore nodes when they announce one.', style: TextStyle(fontSize: 13))))),
+        const Positioned(left: 24, right: 24, bottom: 40, child: Card(child: Padding(padding: EdgeInsets.all(12), child: Text('No positions yet. Nodes appear here at their lat/lon when a position is known (your phone can share one above; Meshtastic and MeshCore nodes when they announce one). The grid works offline; map tiles need internet and are then cached for offline reuse.', style: TextStyle(fontSize: 13))))),
     ]);
   }
 }
