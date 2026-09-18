@@ -710,7 +710,12 @@ impl UiModel {
     /// A MeshStar message arrived.
     pub fn push_native(&mut self, from: Address, text: &str, protection: Protection, rssi: i16, hops: u8, relay: Option<Address>, now: u64) {
         let via = relay.map(|r| Self::short_addr(&r)).unwrap_or_default();
-        self.push_msg(UiMsg { seq: 0, proto: Proto::Star, from_id: IdentityRef::MeshStar(from), from: Self::short_addr(&from), channel: Name::try_from("direct").unwrap_or_default(), text: text.chars().take(96).collect(), sec: Sec::from_protection(protection), rssi, hops, at: now, unread: true, via });
+        // Broadcasts (plaintext or group key) belong to the "all" channel.
+        let channel = match protection {
+            Protection::Session | Protection::Envelope => "direct",
+            Protection::Group | Protection::Plaintext => "all",
+        };
+        self.push_msg(UiMsg { seq: 0, proto: Proto::Star, from_id: IdentityRef::MeshStar(from), from: Self::short_addr(&from), channel: Name::try_from(channel).unwrap_or_default(), text: text.chars().take(96).collect(), sec: Sec::from_protection(protection), rssi, hops, at: now, unread: true, via });
     }
 
     /// A node told us where it is.

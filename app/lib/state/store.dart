@@ -309,6 +309,9 @@ class Store extends ChangeNotifier {
           if (!accepted) {
             m.delivery = p.Delivery.failed;
             m.reason = reason;
+          } else if (threads[m.thread]?.target?.isBroadcast ?? false) {
+            // Broadcasts have no acknowledgement: accepted = on the air.
+            m.delivery = p.Delivery.sent;
           }
         }
         _save();
@@ -344,7 +347,7 @@ class Store extends ChangeNotifier {
   /// Thread key for an incoming message: channel threads per network, direct
   /// threads per sender.
   String threadKeyFor(p.Proto proto, p.NodeId? from, String channel) {
-    if (proto != p.Proto.meshStar && channel.isNotEmpty && channel != 'direct') return '${proto.name}/#$channel';
+    if (channel.isNotEmpty && channel != 'direct') return '${proto.name}/#$channel';
     return from?.canonical ?? '${proto.name}/#$channel';
   }
 

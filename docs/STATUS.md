@@ -112,3 +112,23 @@ benchmarks/run.sh                         # reproduce BENCHMARKS.md (~25 min)
 cargo run --release -p meshstar-sim --example debug -- 100 1800 2 zrp   # diagnóstico de protocolo
 target/release/meshstar shell --nodes 12  # inspección interactiva
 ```
+
+## Prueba de dos teléfonos (2026-09-18)
+
+Dos teléfonos (M2, Android 7) cada uno con la app y conectado por BLE a su
+propia Heltec V3 (A y B, ambas en modo scan). Chat en las tres bandas:
+
+* **MeshStar broadcast** (hilo `#all`, clave de grupo): tel 2 → nodo A → aire
+  → nodo B → tel 1, entregado y visible en ambos. Los broadcast no tienen ack:
+  se marcan "sent" (una raya) en cuanto salen al aire.
+* **MeshCore `#Public`**: tel 2 → A lo transmite en 869.618/SF8 → el repetidor
+  CF-Bolivar lo repite y el nodo B (scan) lo decodifica.
+* **Meshtastic `#LongFast`**: A lo transmite en 869.525/SF11 → recibido 20/20
+  con B en modo Meshtastic fijo. Recepción en modo **scan** a SF11: floja (el
+  módem detecta el preámbulo tras el salto CAD pero a menudo no completa la
+  trama); MeshCore en scan y MeshStar+MeshCore en scan van bien. Pendiente de
+  afinar el enganche CAD a SF11.
+
+Mapa: vista fija sobre Europa (Canal, 50.5N 1.5W), sin recentrado automático
+(eso era lo que lo hacía "desaparecer"); las teselas requieren internet en el
+teléfono (uso offline mostraría el mapa en negro). Sin logo de flutter_map.

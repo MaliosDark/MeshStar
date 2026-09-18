@@ -3,7 +3,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
-import '../protocol/companion.dart' as p;
 import '../state/store.dart';
 import 'nodes_page.dart';
 import 'widgets.dart';
@@ -18,12 +17,10 @@ class MapPage extends StatelessWidget {
     final store = context.watch<Store>();
     final located = store.nodes.values.where((n) => n.hasPosition).toList();
     final me = store.myPosition;
-    LatLng center = const LatLng(40.4, -3.7);
-    if (me != null) {
-      center = LatLng(me.latitude, me.longitude);
-    } else if (located.isNotEmpty) {
-      center = LatLng(located.first.lat, located.first.lon);
-    }
+    // Europe, over the Channel between France and the UK; the map never
+    // re-centres or re-zooms by itself (that is what made it "vanish"
+    // while tiles for a new zoom level loaded).
+    const center = LatLng(50.5, -1.5);
     final lines = <Polyline>[];
     for (final t in store.traces.values) {
       if (!t.reached) continue;
@@ -37,9 +34,15 @@ class MapPage extends StatelessWidget {
     }
     return Stack(children: [
       FlutterMap(
-        options: MapOptions(initialCenter: center, initialZoom: located.isEmpty && me == null ? 5 : 12),
+        options: const MapOptions(initialCenter: center, initialZoom: 6, backgroundColor: Color(0xFF0B1118)),
         children: [
-          TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'org.meshstar.meshstar'),
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'org.meshstar.meshstar',
+            keepBuffer: 4,
+            panBuffer: 1,
+            errorTileCallback: (tile, error, stackTrace) => debugPrint('tile ${tile.coordinates}: $error'),
+          ),
           PolylineLayer(polylines: lines),
           MarkerLayer(markers: [
             if (me != null) Marker(point: LatLng(me.latitude, me.longitude), width: 36, height: 36, child: const Icon(Icons.my_location, color: Colors.white, size: 28)),
@@ -57,8 +60,12 @@ class MapPage extends StatelessWidget {
                 ),
               ),
           ]),
-          const RichAttributionWidget(attributions: [TextSourceAttribution('OpenStreetMap contributors')]),
         ],
+      ),
+      const Positioned(
+        right: 6,
+        bottom: 4,
+        child: Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Colors.white54, backgroundColor: Color(0x880B1118))),
       ),
       Positioned(
         left: 12,
@@ -80,4 +87,3 @@ class MapPage extends StatelessWidget {
   }
 }
 
-String protoLabel(p.Proto pr) => pr.label;
