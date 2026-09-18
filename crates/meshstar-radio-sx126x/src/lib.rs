@@ -418,18 +418,13 @@ where
     /// parameters) and enter receive mode. `profile` must have been fully
     /// configured before (PA, packet type, IRQ mask are kept).
     pub fn retune(&mut self, profile: &LoRaProfile) -> Result<(), RadioError> {
-        self.cmd(op::SET_STANDBY, &[0x00])?;
-        self.receiving = false;
-        self.profile = *profile;
-        if profile.frequency_hz != self.rf_hz {
-            self.set_frequency(profile.frequency_hz)?;
-        }
-        let bw = Self::bandwidth_code(profile.bandwidth_hz)?;
-        let ldro = if profile.low_data_rate_optimize() { 0x01 } else { 0x00 };
-        self.cmd(op::SET_MODULATION_PARAMS, &[profile.spreading_factor, bw, profile.coding_rate - 4, ldro])?;
-        let sw = profile.sync_word_sx126x();
-        self.write_register(reg::LORA_SYNC_WORD_MSB, (sw >> 8) as u8)?;
-        self.write_register(reg::LORA_SYNC_WORD_LSB, sw as u8)?;
+        // A full reconfigure (set_frequency skips image calibration when the
+        // band is unchanged, so hopping within 868 is cheap). A partial
+        // retune that only rewrites the modulation params leaves the
+        // SX1262 unable to complete a BW250/SF11 (Meshtastic) reception even
+        // in continuous RX, for reasons not worth chasing: measured 0 frames
+        // vs a working receiver after a full configure.
+        self.configure(profile)?;
         self.start_receive()
     }
 

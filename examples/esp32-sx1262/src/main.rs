@@ -274,6 +274,7 @@ fn main() -> ! {
         (meshstar_protocols::model::ProtocolId::MeshCore, compat::Compat::profile(meshstar_protocols::model::ProtocolId::MeshCore)),
     ];
     let mut scan = settings.mode == Mode::Scan;
+    let mut mt_dwell_init = scan;
     if let Some(mode) = match settings.mode {
         Mode::MeshCore => Some(meshstar_protocols::model::ProtocolId::MeshCore),
         Mode::Meshtastic => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
@@ -284,6 +285,23 @@ fn main() -> ! {
         let _ = radio.configure(&p).and_then(|_| radio.start_receive());
     }
     let mut settings = settings;
+    // Meshtastic dwell: Meshtastic's 16-symbol preamble at 250 kHz cannot be
+    // caught mid-air by a CAD scanner, so when scanning we periodically sit
+    // in continuous RX on the Meshtastic profile for a window (the modem is
+    // then locked before the preamble and decodes the whole frame). Off by
+    // default; `scan mt` turns it on.
+    const DWELL_INTERVAL_MS: u64 = 1_500;
+    const DWELL_MS: u64 = 450;
+    let mut last_dwell = 0u64;
+    let mut dwelling_until = 0u64;
+    // Adaptive dwell: only dwell on Meshtastic while it has been heard in the
+    // last MT_ACTIVE_MS, so a network with no Meshtastic keeps MeshCore/MeshStar
+    // reception at full strength.
+    const MT_ACTIVE_MS: u64 = 90_000;
+    let mut mt_last_heard = 0u64;
+    let mt_profile = compat::Compat::profile(meshstar_protocols::model::ProtocolId::Meshtastic);
+    let mut mt_dwell = mt_dwell_init;
+    let _ = &mut mt_dwell_init;
     let mut last_scan = 0u64;
     let mut scan_probes = 0u32;
     let mut scan_hits = 0u32;
@@ -342,6 +360,49 @@ fn main() -> ! {
 
     loop {
         let now = now_ms();
+        // Meshtastic continuous-RX dwell (see DWELL_* above).
+        let mt_active = mt_dwell && now.saturating_sub(mt_last_heard) < MT_ACTIVE_MS;
+        if scan && mt_active && compat.mode.is_none() {
+            if dwelling_until == 0 && now.saturating_sub(last_dwell) >= DWELL_INTERVAL_MS && node.tx_queue_len() == 0 && !radio.rx_active() {
+                last_dwell = now;
+                dwelling_until = now + DWELL_MS;
+                let _ = radio.retune(&mt_profile);
+            }
+            if dwelling_until != 0 {
+                // Drain Meshtastic frames for the whole window.
+                match radio.receive(&mut rx_buf) {
+                    Ok(Some((n, mut meta))) => {
+                        meta.timestamp_ms = now;
+                        scan_frames += 1;
+                        let mut r = [0u8; 32];
+                        lbt_rng.fill_bytes(&mut r);
+                        mt_last_heard = now;
+                        let (line, msg) = compat.on_rx(&rx_buf[..n], &meta, now, r);
+                        println!("[dwell mt] rx {} B rssi {} snr {:.1}: {}", n, meta.rssi_dbm, meta.snr_db, line);
+                        if let Some(m) = msg {
+                            if m.content_type == meshstar_protocols::model::ContentType::Text {
+                                led_until = now + 400;
+                            }
+                            model.observe_foreign(&m, meta.rssi_dbm, now);
+                        }
+                    }
+                    _ => {}
+                }
+                // Extend the window while a frame is mid-flight, else close it.
+                if now >= dwelling_until && !radio.rx_active() {
+                    dwelling_until = 0;
+                    let _ = radio.retune(&profile);
+                } else {
+                    // Stay in the dwell; skip the CAD sweep this iteration.
+                    let wake = node.next_wakeup();
+                    let now2 = now_ms();
+                    if wake > now2 + 2 {
+                        delay.delay_millis(1);
+                    }
+                    continue;
+                }
+            }
+        }
         if scan && compat.mode.is_none() && now.saturating_sub(last_scan) >= SCAN_PERIOD_MS && node.tx_queue_len() == 0 {
             // A native frame in progress is never interrupted: from the preamble
             // detection until the header should have arrived, and from a valid
@@ -448,6 +509,9 @@ fn main() -> ! {
                             let mut r = [0u8; 32];
                             lbt_rng.fill_bytes(&mut r);
                             let t = now_ms();
+                            if pid == meshstar_protocols::model::ProtocolId::Meshtastic {
+                                mt_last_heard = t;
+                            }
                             let (line, msg) = compat.on_rx(&rx_buf[..n], &meta, t, r);
                             println!("[scan {}] rx {} B rssi {} snr {:.1} after {} ms {:?}: {}", pid, n, meta.rssi_dbm, meta.snr_db, t.saturating_sub(t0), tried, line);
                             if let Some(m) = msg {
@@ -589,9 +653,14 @@ fn main() -> ! {
                                     "meshtastic" => Some(meshstar_protocols::model::ProtocolId::Meshtastic),
                                     _ => None,
                                 };
-                                scan = arg.trim() == "scan";
+                                let a = arg.trim();
+                                scan = a == "scan" || a == "mt";
+                                // Meshtastic dwell is on by default in scan; `scan nomt` disables it.
+                                mt_dwell = scan && a != "nomt";
+                                if a == "nomt" { scan = true; }
+                                dwelling_until = 0;
                                 if scan {
-                                    println!("scan: MeshStar + CAD probes on MeshCore/Meshtastic every {} ms", SCAN_PERIOD_MS);
+                                    println!("scan: MeshStar + CAD MeshCore{}", if mt_dwell { " + Meshtastic dwell" } else { "" });
                                 }
                                 compat.mode = mode;
                                 let p = mode.map(compat::Compat::profile).unwrap_or(profile);

@@ -107,6 +107,24 @@ time; the native preamble costs 41 ms per MeshStar frame. What is not done
 yet: replying on the foreign network from scan mode (the fixed compat modes
 do send), Meshtastic `NodeInfo`, and a time source for foreign timestamps.
 
+### Receiving Meshtastic while scanning (the one-radio limit)
+
+Meshtastic `LongFast` uses a 16-symbol preamble at 250 kHz (~131 ms). A
+CAD scanner that enters receive mid-preamble cannot lock the demodulator in
+the few symbols that remain, so pure CAD-scan catches only a fraction of
+Meshtastic frames (MeshCore's 32-symbol preamble and MeshStar's 32-symbol
+preamble are caught reliably). The firmware adds an **adaptive Meshtastic
+dwell**: while Meshtastic has been heard in the last 90 s, the radio sits in
+continuous receive on the Meshtastic profile for 450 ms out of every 1500 ms
+(the modem is then locked before the preamble and decodes the whole frame).
+When no Meshtastic is around the dwell is off and MeshCore/MeshStar
+reception is at full strength. Measured desk-range in scan: Meshtastic 0 →
+7-10 of 20 with the dwell, MeshCore 6-11 of 12, MeshStar always. Perfect
+simultaneous reception of all three needs two radios; with one radio this
+is the honest best effort. Also: a partial `retune` (modulation only) leaves
+the SX1262 unable to complete a BW250/SF11 reception, so `retune` now does a
+full `configure` (image calibration is still skipped within a band).
+
 The compat firmware has no real-time clock yet: foreign timestamps are
 synthesised from uptime (`1700000000 + uptime`), so MeshCore shows 2023
 dates for MeshStar messages until an RTC/time sync exists.
