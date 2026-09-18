@@ -73,7 +73,14 @@ class BleLink extends ChangeNotifier {
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 12), androidScanMode: AndroidScanMode.lowLatency);
       await FlutterBluePlus.isScanning.where((s) => s == false).first;
     } catch (e) {
-      error = '$e';
+      final msg = e.toString();
+      if (msg.contains('Location') || msg.contains('location')) {
+        error = 'Turn on Location — Android requires it to scan for Bluetooth devices (the app does not use your location).';
+      } else if (msg.contains('bluetooth') || msg.contains('Bluetooth') || msg.contains('adapter')) {
+        error = 'Turn on Bluetooth to find your node.';
+      } else {
+        error = 'Could not scan: $msg';
+      }
     }
     if (state == LinkState.scanning) state = LinkState.off;
     notifyListeners();

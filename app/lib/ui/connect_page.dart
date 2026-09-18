@@ -47,7 +47,18 @@ class _ConnectPageState extends State<ConnectPage> {
               label: Text(link.state == LinkState.scanning ? 'Scanning…' : 'Scan for nodes'),
             ),
           ]),
-          if (link.error != null) Padding(padding: const EdgeInsets.all(12), child: Text(link.error!, style: const TextStyle(color: Colors.redAccent))),
+          if (link.error != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(children: [
+                Text(link.error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.orangeAccent)),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, children: [
+                  OutlinedButton.icon(onPressed: openAppSettings, icon: const Icon(Icons.settings_outlined, size: 18), label: const Text('Open settings')),
+                  OutlinedButton.icon(onPressed: link.startScan, icon: const Icon(Icons.refresh, size: 18), label: const Text('Try again')),
+                ]),
+              ]),
+            ),
           if (link.state == LinkState.connecting || link.state == LinkState.reconnecting)
             Padding(
               padding: const EdgeInsets.all(12),

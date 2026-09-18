@@ -39,9 +39,11 @@ class _GraticulePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // A dark "sea" ground so the map reads as a map, not an empty screen.
+    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF10233A));
     final b = camera.visibleBounds;
     final line = Paint()
-      ..color = const Color(0x22FFFFFF)
+      ..color = const Color(0x552E5C86)
       ..strokeWidth = 1;
     final stepLat = _step(b.north - b.south);
     final stepLng = _step(b.east - b.west);
@@ -56,7 +58,7 @@ class _GraticulePainter extends CustomPainter {
     for (var lat = (b.south / stepLat).ceil() * stepLat; lat <= b.north; lat += stepLat) {
       final y = camera.latLngToScreenOffset(LatLng(lat.toDouble(), camera.center.longitude)).dy;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
-      label('${lat.toStringAsFixed(stepLat < 1 ? 2 : 0)}°', Offset(4, y + 2));
+      label('${lat.toStringAsFixed(stepLat < 1 ? 2 : 0)}° N', Offset(4, y + 2));
     }
     for (var lng = (b.west / stepLng).ceil() * stepLng; lng <= b.east; lng += stepLng) {
       final x = camera.latLngToScreenOffset(LatLng(camera.center.latitude, lng.toDouble())).dx;
