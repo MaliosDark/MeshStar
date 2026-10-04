@@ -532,6 +532,30 @@ mod tests {
         (a, b, rng)
     }
 
+    // Decode a hex string into bytes (test helper, no extra dependency).
+    fn hx(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    #[test]
+    fn hkdf2_known_answer_vectors() {
+        // Independent reference: Python hmac/hashlib computed the same outputs
+        // for the Noise HKDF (temp = HMAC(ck, ikm); o1 = HMAC(temp, 0x01);
+        // o2 = HMAC(temp, o1 || 0x02)). Pinning them catches any drift in the
+        // hand-written key schedule.
+        let mut ck = [0u8; 32];
+        for (i, b) in ck.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let (o1, o2) = hkdf2(&ck, b"meshstar-kat");
+        assert_eq!(o1.to_vec(), hx("3015eaeb6152a73b974b25fd777ac4f6299991d0699a773b32d1feff79822ae1"));
+        assert_eq!(o2.to_vec(), hx("458487a041f1a49314f5e19ce26808e31e533de8b5141cbb3038b9a5350bc438"));
+        // The empty-ikm case (a mix with no DH material).
+        let (e1, e2) = hkdf2(&ck, b"");
+        assert_eq!(e1.to_vec(), hx("1d7e0d6f1d9da2d68dabed53b5f88345f3fd01cb75411fbe5aa4293bd8f430d6"));
+        assert_eq!(e2.to_vec(), hx("3ed9b8035bbf370b8cfef7ff15007de45488e18660c84e3d996e8e6c658fa7f8"));
+    }
+
     #[test]
     fn xx_full_handshake() {
         let (a, b, mut rng) = pair();

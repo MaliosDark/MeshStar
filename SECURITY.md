@@ -35,7 +35,10 @@ credit reporters who want it.
   channel keys. MeshStar never presents a channel key as end-to-end encryption;
   each message carries its real security level.
 
-See `docs/THREAT_MODEL.md` for the full model and its assumptions.
+See `docs/THREAT_MODEL.md` for the full model and its assumptions, and
+`docs/CRYPTO_REVIEW.md` for a guide to reviewing the handshake and transport
+cryptography (what is standard Noise XX, what is MeshStar-specific, and how it
+is tested).
 
 ## Scope
 
