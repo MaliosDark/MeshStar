@@ -1,0 +1,51 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security issues do not use this form; follow SECURITY.md and report privately.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands, inputs, or actions. A failing test or a sim command is ideal.
+      placeholder: |
+        1. cargo run ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - meshstar-core (protocol)
+        - meshstar-protocols (Meshtastic / MeshCore interop)
+        - meshstar-sim (simulator)
+        - meshstar-cli
+        - companion app / BLE
+        - firmware (ESP32 / Specter)
+        - docs / website
+        - other
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware and environment
+      description: Board, radio, OS, phone, toolchain versions if relevant.
+      placeholder: Heltec V3 (ESP32-S3 + SX1262), Linux, Rust stable
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      render: shell

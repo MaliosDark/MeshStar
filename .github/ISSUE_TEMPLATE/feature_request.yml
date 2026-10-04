@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that MeshStar does not let you do today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed idea
+      description: How you imagine it working. Protocol changes should say how they stay bounded and measurable.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - meshstar-core (protocol)
+        - meshstar-protocols (interop)
+        - meshstar-sim
+        - meshstar-cli
+        - companion app
+        - firmware
+        - docs / website
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
