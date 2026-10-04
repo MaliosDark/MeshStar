@@ -164,7 +164,9 @@ is not protected. In one line: content and sender authenticity are end-to-end
 (Noise XX / Noise X); the control plane is protected by signed full beacons, the
 optional network tag, and bounded, validated state everywhere; metadata
 (addresses, sizes, timing) is visible to anyone in range. Relays never decrypt,
-so a relay can run on a part too small for the full stack.
+so a relay can run on a part too small for the full stack. Such a relay does
+not sign its beacons and does not verify others'
+([docs/HARDWARE.md](docs/HARDWARE.md)).
 
 ## Companion app
 
