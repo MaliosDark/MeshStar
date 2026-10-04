@@ -58,10 +58,14 @@ fn key_of(e: &[u8]) -> String {
     String::from_utf8_lossy(&k[..end]).into_owned()
 }
 
+/// One decoded entry before namespaces are resolved: ns, key, type, chunk,
+/// payload (bytes after the entry), inline data.
+type RawEntry = (u8, String, u8, u8, Vec<u8>, [u8; 8]);
+
 /// Parse a raw NVS partition image. Never panics on malformed input.
 pub fn parse(image: &[u8]) -> Vec<NvsEntry> {
     let mut namespaces: Vec<(u8, String)> = Vec::new();
-    let mut raw: Vec<(u8, String, u8, u8, Vec<u8>, [u8; 8])> = Vec::new(); // ns, key, type, chunk, payload(after entry), data
+    let mut raw: Vec<RawEntry> = Vec::new();
     for page in image.chunks(PAGE) {
         if page.len() < 64 {
             continue;

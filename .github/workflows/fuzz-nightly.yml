@@ -1,0 +1,41 @@
+name: Fuzz (nightly, deep)
+
+# A longer fuzzing run on a schedule, so the decoders keep getting hammered
+# well beyond the quick smoke test in CI. A crash uploads its reproducer.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    name: Deep fuzz
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - core_packet
+          - core_zrp
+          - core_neighbor
+          - core_transport
+          - proto_meshtastic
+          - proto_meshcore
+          - companion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz ${{ matrix.target }} for 10 minutes
+        working-directory: crates/meshstar-core
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=600 -rss_limit_mb=4096
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: crates/meshstar-core/fuzz/artifacts/
+          if-no-files-found: ignore

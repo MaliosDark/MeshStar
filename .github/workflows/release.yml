@@ -1,0 +1,97 @@
+name: Release
+
+# On a version tag, build the firmware images and the CLI, then publish them on
+# a GitHub Release. The ESP32-S3 full image and the Specter relay image are the
+# exact files the website's in-browser flashers download.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  firmware-esp32s3:
+    name: ESP32-S3 full image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: false
+      - name: Install esptool
+        run: pipx install esptool
+      - name: Build and merge the full image
+        working-directory: examples/esp32-sx1262
+        run: |
+          mkdir -p .cargo && cp -n .cargo-config.toml .cargo/config.toml 2>/dev/null || true
+          cargo build --release
+          ELF=target/xtensa-esp32s3-none-elf/release/meshstar-esp32-sx1262
+          esptool.py --chip esp32s3 elf2image --flash-mode dio --flash-freq 80m --flash-size 8MB -o app.bin "$ELF"
+          esptool.py --chip esp32s3 merge-bin -o meshstar-esp32s3-full.bin \
+            --flash-mode dio --flash-freq 80m --flash-size 8MB \
+            0x0 ../../firmware/bootloader-esp32s3.bin \
+            0x8000 ../../firmware/partitions-8mb.bin \
+            0x10000 app.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meshstar-esp32s3-full
+          path: examples/esp32-sx1262/meshstar-esp32s3-full.bin
+
+  firmware-specter:
+    name: Specter relay image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7m-none-eabi
+          components: llvm-tools
+      - name: Build and objcopy the relay
+        working-directory: examples/stm32f1-specter
+        run: |
+          mkdir -p .cargo && cp -n .cargo-config.toml .cargo/config.toml 2>/dev/null || true
+          cargo build --release
+          ELF=target/thumbv7m-none-eabi/release/meshstar-specter-relay
+          HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          OBJCOPY="$(rustc --print sysroot)/lib/rustlib/$HOST/bin/llvm-objcopy"
+          "$OBJCOPY" -O binary "$ELF" meshstar-specter-relay.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meshstar-specter-relay
+          path: examples/stm32f1-specter/meshstar-specter-relay.bin
+
+  cli:
+    name: CLI (linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the CLI
+        run: cargo build --release -p meshstar-cli
+      - name: Package
+        run: |
+          tar -czf meshstar-cli-linux-x86_64.tar.gz -C target/release meshstar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meshstar-cli-linux-x86_64
+          path: meshstar-cli-linux-x86_64.tar.gz
+
+  publish:
+    name: Publish release
+    needs: [firmware-esp32s3, firmware-specter, cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true

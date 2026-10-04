@@ -8,10 +8,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/MaliosDark/MeshStar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MaliosDark/MeshStar/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-blue.svg"></a>
   <img alt="Language: Rust" src="https://img.shields.io/badge/core-Rust%20no__std-orange.svg">
   <img alt="App: Flutter" src="https://img.shields.io/badge/app-Flutter-02569B.svg">
   <img alt="Tests: 201" src="https://img.shields.io/badge/tests-201%20passing-brightgreen.svg">
+  <img alt="Fuzzed" src="https://img.shields.io/badge/decoders-fuzzed-9cf.svg">
   <img alt="Hardware validated" src="https://img.shields.io/badge/hardware-validated-success.svg">
 </p>
 

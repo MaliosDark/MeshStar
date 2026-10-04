@@ -1016,7 +1016,7 @@ mod tests {
 
     #[test]
     fn long_strings_are_cut_on_char_boundaries() {
-        let text: String = core::iter::repeat('ñ').take(300).collect();
+        let text: String = "ñ".repeat(300);
         let e = Request::SendText { to: NodeId::Broadcast(Proto::MeshStar), reliability: 0, text }.encode();
         match Request::decode(&e[HEADER_LEN..]).unwrap() {
             Request::SendText { text, .. } => assert_eq!(text.len(), 254),

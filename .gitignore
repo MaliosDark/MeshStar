@@ -14,3 +14,11 @@ app/android/app/.cxx/
 app/*.iml
 examples/stm32f1-specter/target/
 examples/stm32f1-specter/.cargo/
+
+# Sitio web, fuera del repo hasta nuevo aviso
+site/
+
+# Fuzzing: keep the targets and Cargo.lock, not the generated corpora/artifacts
+crates/meshstar-core/fuzz/corpus/
+crates/meshstar-core/fuzz/artifacts/
+crates/meshstar-core/fuzz/coverage/

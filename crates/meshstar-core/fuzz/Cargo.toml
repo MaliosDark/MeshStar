@@ -1,0 +1,69 @@
+[package]
+name = "meshstar-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+meshstar-core = { path = ".." }
+meshstar-protocols = { path = "../../meshstar-protocols" }
+meshstar-companion = { path = "../../meshstar-companion" }
+
+# Never confuse the parent workspace: this fuzz crate stands on its own.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "core_packet"
+path = "fuzz_targets/core_packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_zrp"
+path = "fuzz_targets/core_zrp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_neighbor"
+path = "fuzz_targets/core_neighbor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_transport"
+path = "fuzz_targets/core_transport.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proto_meshtastic"
+path = "fuzz_targets/proto_meshtastic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proto_meshcore"
+path = "fuzz_targets/proto_meshcore.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "companion"
+path = "fuzz_targets/companion.rs"
+test = false
+doc = false
+bench = false

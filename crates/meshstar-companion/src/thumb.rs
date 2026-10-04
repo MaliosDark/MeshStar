@@ -40,7 +40,7 @@ pub const PALETTE: [(u8, u8, u8); 16] = [
     (90, 120, 90),
 ];
 
-const MAGIC: [u8; 2] = [b'T', b'H'];
+const MAGIC: [u8; 2] = *b"TH";
 /// Largest thumbnail edge.
 pub const MAX_EDGE: usize = 48;
 
@@ -175,7 +175,7 @@ mod tests {
         let mut px = Vec::new();
         for y in 0..h {
             for x in 0..w {
-                px.push(PALETTE[((x + y) % 16)]);
+                px.push(PALETTE[(x + y) % 16]);
             }
         }
         let enc = encode(w, h, &px).unwrap();
