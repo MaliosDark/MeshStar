@@ -744,6 +744,28 @@ impl Node {
             }
             self.start_handshake(a, now);
         }
+        // Re-arm key discovery for envelopes still waiting for a key. A proxy
+        // can answer a RREQ with a route but no key (the sender needs the
+        // leaf's own key to seal the envelope end-to-end), and a single lost
+        // key-bearing reply would otherwise strand the envelope until it times
+        // out. Keep asking, gated by the discovery holdoff so this never
+        // storms, until the key arrives or the envelope ages out below.
+        let want_key: Vec<Address> = {
+            let mut v: Vec<Address> = Vec::new();
+            for p in &self.pending_envelopes {
+                if !self.key_dir.contains_key(&p.dst) && !v.contains(&p.dst) {
+                    v.push(p.dst);
+                }
+            }
+            v
+        };
+        for dst in want_key {
+            if self.ierp.may_start(&dst, now) {
+                let req_id = self.new_packet_id();
+                let ttl = self.ierp.start(dst, req_id, now);
+                self.send_route_request(dst, req_id, ttl, now);
+            }
+        }
         // Pending envelopes waiting for a key too long.
         // A full expanding-ring discovery can take ~90 s: wait for it.
         let stale: Vec<PendingEnvelope> = self.pending_envelopes.iter().filter(|p| now.saturating_sub(p.queued_at) > 180_000).cloned().collect();

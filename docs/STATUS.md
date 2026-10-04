@@ -58,12 +58,26 @@ transmisiones por mensaje. Con tráfico aleatorio a través de toda la red todo 
    Grabado con `tools/flash_example.sh` (esptool; espflash 4 no acepta imágenes sin app
    descriptor). Pendiente en hardware: revisar lecturas RSSI a 0 intermitentes en el driver
    SX126x, falsos positivos de `channel_busy`, OLED/botón (sin confirmar visualmente), sondeo CAD.
-3. **Store-and-forward a escala** (benchmark F: 19,7 % entregado, 18 % confirmado tras el
-   rediseño LEAF/host). Lo que queda es la fiabilidad de la respuesta de descubrimiento a varios
-   saltos (el remitente necesita llegar al host de la LEAF para obtener la clave). Ideas: que
-   cualquier nodo que conozca la clave de una LEAF pueda adjuntarla en un RREP de "sólo clave"
-   sin ruta; caché de claves de LEAF distribuida en beacons completos de los hosts (32 B por
-   LEAF, rotando); reintento del RREQ de clave con TTL pequeño hacia el host conocido.
+3. **Store-and-forward a escala** (en progreso 2026-10-04). Diagnostico medido con
+   `cargo run -p meshstar-sim --example saf` y `sim run --pattern leaves --reliability store`:
+   los dos fallos reales son NoKey (el descubrimiento de clave del remitente falla entero,
+   no a medias) y NoAck (el envelope sellado no llega a un buzon: pocos STORE prosperan).
+   Nota: la adquisicion de clave en si distribuye bien (muchos nodos aprenden la clave con el
+   tiempo); el problema era que **solo el host** respondia a un RREQ con clave y su RREP
+   multi-salto se perdia. Implementado: (a) cualquier ANCHOR vecino de la LEAF que ya tenga su
+   clave responde tambien el RREQ de clave como proxy valido (puede almacenar porque la LEAF
+   despierta a su alcance), dando respuestas redundantes que sobreviven a una perdida; (b)
+   re-emision del descubrimiento de clave para envelopes que siguen sin clave (housekeeping),
+   acotada por el holdoff. Medido en 6 semillas (30 nodos, leaves 0.4, anchors 0.2, 2400 s):
+   entrega 13,2 %  ->  15,6 % (+18 % relativo), ack 7,6 %  ->  10,8 % (+42 % relativo), sin
+   regresion; 201 tests y clippy limpios. Probado y descartado por datos: enrutar el envelope
+   hacia la LEAF para captura on-path (no garantiza pasar por el host, peor que el STORE
+   dirigido); subir max_delivery_attempts de 6 a 12 (neutro). Cuello restante: la entrega
+   buzon -> LEAF esta limitada por colisiones dentro de la ventana de 4 s de despertar (14
+   almacenados -> 4 entregados en una topologia), y el NoKey remanente cuando el host esta a
+   mas saltos. Ideas aun sin medir: caja de claves de LEAF en beacons completos de los hosts
+   (32 B por LEAF, rotando); RREP de "solo clave" sin ruta; mas ventanas de despertar tras
+   actividad. Regenerar `benchmarks/out/saf.txt` con `benchmarks/run.sh` (benchmark D).
 4. ~~Validar la interoperabilidad~~ **Hecho** (2026-09-16): MeshCore companion v1.17.1 y
    Meshtastic 2.7.26 reales, ambos en los dos sentidos (ver docs/INTEROP.md). **Modo scan
    con una sola radio validado**: A en MeshStar + sondeos CAD recibe 18-20/20 Meshtastic,

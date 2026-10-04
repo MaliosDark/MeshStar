@@ -433,10 +433,23 @@ impl Node {
             return;
         }
         let known_key = self.key_dir.get(&q.target).map(|k| k.public_key_bytes());
-        // 2. Host proxy for a LEAF neighbour (sleeping or not).
+        // 2. Proxy for a LEAF neighbour (sleeping or not).
         if self.cfg.role.relays() && q.flags & rreq_flags::PROXY_OK != 0 {
             if let Some(n) = self.neighbors.get(&q.target) {
-                if n.is_leaf() && (n.attached_to_me || n.attached.is_empty()) {
+                // The declared host answers for routing. In addition, any anchor
+                // that neighbours this leaf and already holds its key answers a
+                // key request too: the leaf wakes in that anchor's range, so it
+                // can store for it, and several redundant key-bearing replies
+                // make discovery survive a lost reply (the main failure for
+                // store-and-forward to sleeping leaves). Gated on want_key so it
+                // adds no airtime on ordinary routing.
+                let i_am_host = n.is_leaf() && (n.attached_to_me || n.attached.is_empty());
+                let i_can_host = n.is_leaf()
+                    && self.cfg.role == Role::Anchor
+                    && self.mailbox.is_some()
+                    && want_key
+                    && known_key.is_some();
+                if i_am_host || i_can_host {
                     let cost = link_cost(n.link_quality(), 0);
                     self.ierp.proxy_replies_sent += 1;
                     self.send_route_reply(origin, RouteReply { target: q.target, req_id: p.header.packet_id, hops_to_target: 1, cost, flags: rrep_flags::PROXY | rrep_flags::TARGET_LEAF, target_key: if want_key { known_key } else { None }, handshake: Vec::new() }, now);

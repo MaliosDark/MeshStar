@@ -62,6 +62,54 @@ fn multi_hop_chain_discovery_and_delivery() {
 }
 
 #[test]
+fn second_anchor_with_the_key_answers_key_request() {
+    // Regression for store-and-forward key discovery: a sender that cannot
+    // reach a sleeping leaf's own host must still be able to deliver through a
+    // different anchor that neighbours the leaf and holds its key. Without the
+    // redundant key-bearing proxy reply, the sender never learns the leaf's key
+    // and the message is stranded.
+    let mut m = Medium::new();
+    let mut leaf_cfg = fast_config();
+    leaf_cfg.role = Role::Leaf;
+    leaf_cfg.power.mode = meshstar_core::power::PowerMode::Leaf { wake_interval_s: 60, awake_window_ms: 12000 };
+    let mut anchor_cfg = fast_config();
+    anchor_cfg.role = Role::Anchor;
+    let sender = m.add(fast_config(), 40);
+    let host = m.add(anchor_cfg.clone(), 41); // the leaf's own host
+    let other = m.add(anchor_cfg, 42); // a second anchor, not the host
+    let leaf = m.add(leaf_cfg, 43);
+    // The leaf first meets only its host and attaches there.
+    m.link(host, leaf);
+    m.run(4_000);
+    let leaf_addr = m.nodes[leaf].address();
+    assert!(m.nodes[host].neighbors().get(&leaf_addr).map(|n| n.attached_to_me).unwrap_or(false), "leaf should attach to its host");
+    // Now the second anchor and the sender appear while the leaf is still awake.
+    // The second anchor neighbours the leaf and learns its key from the signed
+    // beacon; the sender reaches only the second anchor, never the host.
+    m.link(other, leaf);
+    m.link(sender, other);
+    m.run(4_000);
+    assert!(m.nodes[other].neighbors().get(&leaf_addr).map(|n| n.is_leaf() && !n.attached_to_me).unwrap_or(false), "second anchor must see the leaf but not be its host");
+    // Let the leaf fall asleep (awake window ends at 12 s of the 20 s cycle).
+    m.run(8_000);
+    assert!(!m.nodes[leaf].is_awake());
+    let h = m.nodes[sender].send_message(leaf_addr, b"via a second anchor", Reliability::StoreAndForward).unwrap();
+    m.run(8_000);
+    assert!(m.stored(sender, h), "expected Stored via the second anchor, got {:?}", m.events_of(sender));
+    assert_eq!(m.nodes[other].mailbox().unwrap().len(), 1, "the non-host anchor should hold the envelope");
+    // Leaf wakes (60 s interval); the second anchor flushes its mailbox to it.
+    // The leaf receives the end-to-end sealed envelope: this is the win, the
+    // sender reached a sleeping leaf through an anchor that was not the leaf's
+    // own host, which only works because that anchor answered the key request.
+    // (The reverse delivery ack back to the sender depends on the leaf finding
+    // a route to it, which this minimal three-link topology does not guarantee,
+    // so it is not asserted here.)
+    m.run(120_000);
+    assert_eq!(m.received_by(leaf), vec![b"via a second anchor".to_vec()]);
+    assert!(m.events_of(leaf).iter().any(|e| matches!(e, NodeEvent::MessageReceived { protection: Protection::Envelope, .. })));
+}
+
+#[test]
 fn zone_routing_needs_no_discovery() {
     let mut m = Medium::new();
     let ids: Vec<usize> = (0..3).map(|i| m.add(fast_config(), 20 + i as u8)).collect();
