@@ -3,46 +3,46 @@ metric                                   value
 ----------------------------------------------
 nodes                                       30
 avg radio degree                           5.4
-messages sent                               48
-delivery ratio                          85.4 %
-ack ratio                               70.8 %
+messages sent                               47
+delivery ratio                          53.2 %
+ack ratio                               44.7 %
 stored at anchor                             0
-latency mean / p95 (ms)         69871 / 336890
+latency mean / p95 (ms)         34834 / 113790
 avg hops                                  1.56
-tx packets                                2771
-tx per delivery                           18.5
-relays / suppressed                  643 / 618
-duplicates rx                             4885
-retransmissions                             55
-control overhead                        73.4 %
-route requests                              11
-route convergence mean                19470 ms
-collisions                                9241
-channel utilisation                    41.19 %
-airtime per node                        24.7 s
-energy mean (mAh)                         5.14
-energy leaf / anchor               0.67 / 6.23
+tx packets                                2769
+tx per delivery                           26.7
+relays / suppressed                  769 / 708
+duplicates rx                             4877
+retransmissions                             51
+control overhead                        76.5 %
+route requests                              26
+route convergence mean                36757 ms
+collisions                               10043
+channel utilisation                    46.48 %
+airtime per node                        27.9 s
+energy mean (mAh)                         5.23
+energy leaf / anchor               0.66 / 6.44
 
 Interop
 {
-  "foreign_messages_sent": 49,
-  "foreign_relays": 560,
-  "bridged_in_delivered": 24,
-  "bridged_in_reach": 0.5458334,
-  "bridged_in_latency_mean_ms": 2447.0833,
-  "native_broadcasts_sent": 22,
-  "bridged_out_delivered": 5,
-  "bridged_out_reach": 0.39000002,
-  "gateway_frames_in": 83,
-  "gateway_frames_out": 163,
-  "gateway_airtime_out_ms": 93914,
-  "gateway_duplicates": 23,
+  "foreign_messages_sent": 48,
+  "foreign_relays": 656,
+  "bridged_in_delivered": 29,
+  "bridged_in_reach": 0.46896556,
+  "bridged_in_latency_mean_ms": 2546.2068,
+  "native_broadcasts_sent": 25,
+  "bridged_out_delivered": 8,
+  "bridged_out_reach": 0.24374999,
+  "gateway_frames_in": 86,
+  "gateway_frames_out": 170,
+  "gateway_airtime_out_ms": 105216,
+  "gateway_duplicates": 18,
   "gateway_loops_prevented": 0,
-  "gateway_rate_limited": 1,
+  "gateway_rate_limited": 4,
   "gateway_policy_denied": 0,
   "gateway_unsupported": 0,
   "gateway_degraded": 0,
-  "missed_by_schedule": 1740,
-  "foreign_collisions": 2014,
-  "translation_airtime_native_ms": 15694
+  "missed_by_schedule": 1863,
+  "foreign_collisions": 2283,
+  "translation_airtime_native_ms": 19515
 }

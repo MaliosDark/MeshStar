@@ -4,23 +4,23 @@ metric                                     zrp   flood-protected
 ----------------------------------------------------------------
 nodes                                      100               100
 avg radio degree                           7.9               7.9
-messages sent                               41                48
-delivery ratio                          65.2 %            25.0 %
-ack ratio                               59.2 %            24.0 %
+messages sent                               42                44
+delivery ratio                          61.2 %            29.6 %
+ack ratio                               60.0 %            21.6 %
 stored at anchor                             0                 0
-latency mean / p95 (ms)          32209 / 93430   105888 / 814825
-avg hops                                  1.59              1.67
-tx packets                                4547              4468
-tx per delivery                           13.0              34.2
-relays / suppressed                  597 / 370       2039 / 4243
-duplicates rx                             7379              5100
-retransmissions                             46                56
-control overhead                        92.5 %            91.5 %
-route requests                              15                 0
-route convergence mean                12233 ms              0 ms
-collisions                               18147             25297
-channel utilisation                    73.65 %           76.72 %
-airtime per node                        13.3 s            13.8 s
-energy mean (mAh)                         4.28              4.30
-energy leaf / anchor               0.68 / 5.24       0.47 / 5.23
+latency mean / p95 (ms)         30063 / 107965    33363 / 111070
+avg hops                                  1.51              1.78
+tx packets                                4303              4299
+tx per delivery                           11.4              29.0
+relays / suppressed                  571 / 284       1932 / 4065
+duplicates rx                             6540              4644
+retransmissions                             37                53
+control overhead                        93.1 %            91.8 %
+route requests                              19                 0
+route convergence mean                31917 ms              0 ms
+collisions                               17736             25094
+channel utilisation                    79.85 %           83.72 %
+airtime per node                        14.4 s            15.1 s
+energy mean (mAh)                         4.35              4.34
+energy leaf / anchor               0.70 / 5.32       0.50 / 5.22
 
